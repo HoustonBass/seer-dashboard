@@ -1,0 +1,13 @@
+.env
+node_modules/
+scripts/discovery/captured-*.json
+scripts/discovery/probe-*.json
+data/cache.db
+data/seerr_cache.db
+data/library_cache.db
+data/matches.db
+data/tmdb_cache.db
+__pycache__/
+*.pyc
+.pytest_cache/
+web/dist/

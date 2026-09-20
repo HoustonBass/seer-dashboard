@@ -1,0 +1,71 @@
+import { mediaStatusLabel, requestStatusLabel } from "../lib/labels";
+
+// One row per Overseerr request, styled as a scannable list (not a dense
+// table) — status as a pill, the library match (if any) as a spine-label
+// chip, mirroring how a call number reads on a DVD case. Deliberately
+// dumb/presentational — all data fetching lives in App.jsx — so this maps
+// cleanly onto a future plugin UI component that just receives props.
+export default function RequestList({ requests, selectedId, onSelect }) {
+  if (requests === null) {
+    return <p className="p-5 text-sm text-[var(--text-faint)]">Loading requests…</p>;
+  }
+  if (requests.length === 0) {
+    return <p className="p-5 text-sm text-[var(--text-faint)]">No requests found.</p>;
+  }
+
+  return (
+    <div>
+      <div className="px-5 py-3 border-b border-[var(--rule)] text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+        Overseerr requests
+      </div>
+      {requests.map((r) => {
+        const available = Number(r.media_status) === 5;
+        return (
+          <div
+            key={r.id}
+            onClick={() => onSelect(r)}
+            className={`flex items-center gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
+              selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
+            }`}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm truncate">
+                {r.title}
+                {r.tmdb?.release_date && (
+                  <span className="text-[var(--text-faint)] font-normal"> ({r.tmdb.release_date.slice(0, 4)})</span>
+                )}
+              </div>
+              <div className="text-xs text-[var(--text-faint)] mt-0.5">
+                {r.type} · {requestStatusLabel(Number(r.request_status))} · requested by {r.requested_by}
+                {r.tmdb?.director && <> · {r.tmdb.director}</>}
+              </div>
+            </div>
+
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
+                available
+                  ? "text-[var(--available)] bg-[var(--available-bg)]"
+                  : "text-[var(--pending)] bg-[var(--pending-bg)]"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              {mediaStatusLabel(Number(r.media_status))}
+            </span>
+
+            {r.match ? (
+              <span className="mono text-xs px-1.5 py-0.5 rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] text-[var(--text-muted)] whitespace-nowrap">
+                {r.match.bib_title}
+                {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                unmatched
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

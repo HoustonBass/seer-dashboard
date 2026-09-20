@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/* Design tokens — library card-catalog palette (see the "Option A" mockup
+   this was approved from). Component classes reference these via Tailwind
+   arbitrary values (e.g. bg-[var(--surface)]) rather than Tailwind's dark:
+   variant, since theme is a manual toggle (data-theme attribute), not just
+   prefers-color-scheme — see web/src/theme/ThemeModeContext.jsx. */
+:root {
+  --bg: #efede4;
+  --surface: #f8f6ef;
+  --surface-raised: #ffffff;
+  --text: #211f1a;
+  --text-muted: #5b564a;
+  --text-faint: #8b8578;
+  --accent: #7a2430;
+  --accent-hover: #631c26;
+  --accent-contrast: #fbeded;
+  --rule: #d8d3c4;
+  --rule-strong: #c2bcaa;
+  --available: #3f6b4a;
+  --available-bg: #e3eee6;
+  --pending: #8a6a2e;
+  --pending-bg: #f3ead6;
+  --unmatched: #8b8578;
+  --unmatched-bg: #eae7dc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1917;
+    --surface: #211e1a;
+    --surface-raised: #28241f;
+    --text: #ede9de;
+    --text-muted: #b3ac9c;
+    --text-faint: #8a8474;
+    --accent: #e0665a;
+    --accent-hover: #ec8378;
+    --accent-contrast: #2b1210;
+    --rule: #3a362c;
+    --rule-strong: #4a4536;
+    --available: #7cbb88;
+    --available-bg: #21311f;
+    --pending: #d9ae5c;
+    --pending-bg: #352a19;
+    --unmatched: #8f8a7c;
+    --unmatched-bg: #2a271f;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1b1917;
+  --surface: #211e1a;
+  --surface-raised: #28241f;
+  --text: #ede9de;
+  --text-muted: #b3ac9c;
+  --text-faint: #8a8474;
+  --accent: #e0665a;
+  --accent-hover: #ec8378;
+  --accent-contrast: #2b1210;
+  --rule: #3a362c;
+  --rule-strong: #4a4536;
+  --available: #7cbb88;
+  --available-bg: #21311f;
+  --pending: #d9ae5c;
+  --pending-bg: #352a19;
+  --unmatched: #8f8a7c;
+  --unmatched-bg: #2a271f;
+}
+
+:root[data-theme="light"] {
+  --bg: #efede4;
+  --surface: #f8f6ef;
+  --surface-raised: #ffffff;
+  --text: #211f1a;
+  --text-muted: #5b564a;
+  --text-faint: #8b8578;
+  --accent: #7a2430;
+  --accent-hover: #631c26;
+  --accent-contrast: #fbeded;
+  --rule: #d8d3c4;
+  --rule-strong: #c2bcaa;
+  --available: #3f6b4a;
+  --available-bg: #e3eee6;
+  --pending: #8a6a2e;
+  --pending-bg: #f3ead6;
+  --unmatched: #8b8578;
+  --unmatched-bg: #eae7dc;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+}
