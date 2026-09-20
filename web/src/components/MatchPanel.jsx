@@ -8,7 +8,7 @@ const DEFAULT_FORMAT = "DVD";
 // library "catalog slip" — search the library catalog, inspect ranked
 // candidates, persist a chosen match. Owns its own search state so
 // RequestList stays a dumb list.
-export default function MatchPanel({ request, onMatchSaved }) {
+export default function MatchPanel({ request, onMatchChange }) {
   const [query, setQuery] = useState(request.title);
   const [format, setFormat] = useState(DEFAULT_FORMAT);
   const [results, setResults] = useState([]);
@@ -65,12 +65,16 @@ export default function MatchPanel({ request, onMatchSaved }) {
       bib_title: candidate.title,
       bib_subtitle: candidate.subtitle,
     });
-    onMatchSaved();
+    onMatchChange(request.id, {
+      bib_id: candidate.bib_id,
+      bib_title: candidate.title,
+      bib_subtitle: candidate.subtitle,
+    });
   }
 
   async function handleClear() {
     await clearMatch(request.id);
-    onMatchSaved();
+    onMatchChange(request.id, null);
   }
 
   return (

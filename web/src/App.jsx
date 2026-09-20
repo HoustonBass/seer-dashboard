@@ -58,6 +58,16 @@ export default function App() {
     load();
   }, [filter]);
 
+  // Choosing/clearing a match updates just that one row in place — no
+  // re-streaming the whole request list (that used to reset scroll position
+  // and flash the loading state for an action that only changed one item).
+  // Updates `selected` too, since MatchPanel reads request.match from that
+  // snapshot, not from `requests` directly.
+  function updateLocalMatch(requestId, match) {
+    setRequests((prev) => (prev ? prev.map((r) => (r.id === requestId ? { ...r, match } : r)) : prev));
+    setSelected((prev) => (prev && prev.id === requestId ? { ...prev, match } : prev));
+  }
+
   const displayedRequests =
     requests === null
       ? null
@@ -127,7 +137,7 @@ export default function App() {
         </div>
         <div className="bg-[var(--surface)] p-5 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto">
           {selected ? (
-            <MatchPanel request={selected} onMatchSaved={load} />
+            <MatchPanel request={selected} onMatchChange={updateLocalMatch} />
           ) : (
             <p className="text-sm text-[var(--text-faint)]">Select a request to search the library.</p>
           )}
