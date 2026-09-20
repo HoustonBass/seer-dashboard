@@ -116,12 +116,17 @@ testing/experimenting without taking down one you're actively using:
 APP_PORT=5099 python3 -m app.main
 ```
 
-`/api/requests` and `/api/search` both return `{"source": "cache"|"live",
-"results": [...]}` so it's visible whether a given response came from a
-repo's SQLite cache or an actual API call — the FE shows this next to each
-list. Concurrent requests for the same thing (same filter, or same
-query+format) share one in-flight fetch rather than each re-fetching — see
-`app/lib/singleflight.py`.
+### Caching & streaming
+
+`/api/search` returns `{"source": "cache"|"live", "results": [...]}` so it's
+visible whether a response came from a repo's SQLite cache or an actual API
+call. `/api/requests` **streams** newline-delimited JSON instead — one
+`{"row": ..., "source": "cache"|"live"}` per line — so the request list
+renders progressively as each request's title/TMDB data resolves, rather
+than waiting on the whole batch (a cold cache used to mean nothing appeared
+until all ~250 requests finished). Concurrent requests for the same
+search (same query+format) share one in-flight fetch rather than each
+re-fetching — see `app/lib/singleflight.py`.
 
 ### UI
 
@@ -162,10 +167,10 @@ reproduced reliably in a test instead of needing a naturally slow call.
 - `scripts/seerr/requests.sh` — working, returns title/status/requester as TSV
   for all Overseerr requests (paginated, resolves titles via TMDB passthrough).
 - Mock frontend (`app/`, `web/`) — working end-to-end: two-pane UI (light/dark
-  theme, feature-switch settings panel), lists Overseerr requests (cached,
-  single-flight, auth-token-cached + parallelized title lookups — first cold
-  load of ~250 requests takes ~2-3s, was ~16s before parallelizing), searches
-  the library per-request, lets you pick a candidate and persists the choice
+  theme, feature-switch settings panel), streams Overseerr requests
+  progressively as each one's title + TMDB data resolves (see "Streaming"
+  above) rather than waiting on the whole batch, searches the library
+  per-request, lets you pick a candidate and persists the choice
   (`data/matches.db`) across restarts.
 - `app/repos/tmdb_repo.py` — hits TMDB directly for richer per-title data
   (release year, overview, genres, director/cast, runtime, poster) that
@@ -173,7 +178,7 @@ reproduced reliably in a test instead of needing a naturally slow call.
   `.env` (the v3 "API Key" specifically, not the v4 Read Access Token or
   OMDb). Wired into `RequestsService` and rendered in both `RequestList`
   and `MatchPanel`.
-- 50 passing tests in `tests/` (all mocked, no real credentials/network).
+- 54 passing tests in `tests/` (all mocked, no real credentials/network).
 - Hold placement (`scripts/library/hold.sh`) is not started.
 
 See `CLAUDE.md` for the plan and conventions any agent picking this up should

@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MatchPanel from "./components/MatchPanel";
 import RequestList from "./components/RequestList";
 import SettingsPopover from "./components/SettingsPopover";
-import { fetchRequests } from "./lib/api";
+import { streamRequests } from "./lib/api";
 import { useThemeMode } from "./theme/ThemeModeContext";
 
 // Mock FE — for testing matching strategies against the real Overseerr +
@@ -18,18 +18,35 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { mode, toggle: toggleTheme } = useThemeMode();
+  const loadGeneration = useRef(0);
 
   async function load(refresh = false) {
-    const { source, results } = await fetchRequests(filter, { refresh });
-    setRequests(results);
-    setRequestsSource(source);
-    if (selected) {
-      setSelected(results.find((r) => r.id === selected.id) ?? null);
+    // Rows arrive one at a time (see streamRequests) — if the filter changes
+    // (or Refresh is clicked) mid-stream, this guard drops the stale
+    // stream's late-arriving rows instead of mixing them into the new one.
+    const generation = ++loadGeneration.current;
+    setRequests(null);
+    setRequestsSource(null);
+    const rows = [];
+
+    await streamRequests(filter, { refresh }, ({ row, source }) => {
+      if (loadGeneration.current !== generation) return;
+      rows.push(row);
+      // Rows resolve in completion order, not Overseerr's "most recently
+      // added" order — re-sort by id (descending) on every update so the
+      // list settles into the right place as each one streams in, instead
+      // of looking shuffled by network timing.
+      rows.sort((a, b) => b.id - a.id);
+      setRequestsSource(source);
+      setRequests([...rows]);
+    });
+
+    if (loadGeneration.current === generation && selected) {
+      setSelected(rows.find((r) => r.id === selected.id) ?? null);
     }
   }
 
   useEffect(() => {
-    setRequests(null);
     load();
   }, [filter]);
 

@@ -71,6 +71,92 @@ def test_requests_service_passes_filter_and_refresh_through():
     seerr_repo.list_requests.assert_called_once_with("approved", force_refresh=True)
 
 
+def test_stream_requests_replays_cached_rows_directly_without_live_fetch():
+    seerr_repo = MagicMock()
+    seerr_repo.get_cached_requests.return_value = [
+        {"id": 1, "title": "A", "type": "movie", "tmdb_id": 100, "tmdb": {"director": "X"}},
+        {"id": 2, "title": "B", "type": "movie", "tmdb_id": 200, "tmdb": None},
+    ]
+    match_repo = MagicMock()
+    match_repo.get_all_matches.return_value = {1: {"bib_id": "M1"}}
+    tmdb_repo = MagicMock()
+
+    service = RequestsService(seerr_repo, match_repo, tmdb_repo)
+    results = list(service.stream_requests("all"))
+
+    assert [source for _, source in results] == ["cache", "cache"]
+    rows = [row for row, _ in results]
+    assert rows[0]["match"] == {"bib_id": "M1"}
+    assert rows[0]["tmdb"] == {"director": "X"}
+    assert rows[1]["match"] is None
+    seerr_repo.fetch_raw_requests.assert_not_called()
+    tmdb_repo.get.assert_not_called()  # cached rows already carry their tmdb data
+
+
+def test_stream_requests_live_path_resolves_and_caches_full_set():
+    seerr_repo = MagicMock()
+    seerr_repo.get_cached_requests.return_value = None
+    seerr_repo.fetch_raw_requests.return_value = [
+        {"id": 1, "type": "movie", "status": 2, "media": {"tmdbId": 100, "status": 3}, "requestedBy": {"displayName": "Houston"}},
+        {"id": 2, "type": "tv", "status": 1, "media": {"tmdbId": 200, "status": 2}, "requestedBy": {"displayName": "Houston"}},
+    ]
+    seerr_repo.fetch_title.side_effect = lambda media_type, tmdb_id: f"Title-{tmdb_id}"
+    match_repo = MagicMock()
+    match_repo.get_all_matches.return_value = {}
+    tmdb_repo = MagicMock()
+    tmdb_repo.get.side_effect = lambda media_type, tmdb_id: ({"tmdb_id": tmdb_id}, "live")
+
+    service = RequestsService(seerr_repo, match_repo, tmdb_repo)
+    results = list(service.stream_requests("all"))
+
+    assert len(results) == 2
+    assert all(source == "live" for _, source in results)
+    titles = {row["id"]: row["title"] for row, _ in results}
+    assert titles == {1: "Title-100", 2: "Title-200"}
+
+    # the full resolved set gets cached, tmdb data baked in, for next time's cache-hit replay
+    seerr_repo.cache_requests.assert_called_once()
+    cached_filter, cached_rows = seerr_repo.cache_requests.call_args[0]
+    assert cached_filter == "all"
+    assert {r["id"] for r in cached_rows} == {1, 2}
+    assert all("tmdb" in r for r in cached_rows)
+
+
+def test_stream_requests_isolates_a_single_tmdb_failure():
+    seerr_repo = MagicMock()
+    seerr_repo.get_cached_requests.return_value = None
+    seerr_repo.fetch_raw_requests.return_value = [
+        {"id": 1, "type": "movie", "status": 2, "media": {"tmdbId": 100, "status": 3}, "requestedBy": {"displayName": "H"}},
+    ]
+    seerr_repo.fetch_title.return_value = "Some Movie"
+    match_repo = MagicMock()
+    match_repo.get_all_matches.return_value = {}
+    tmdb_repo = MagicMock()
+    tmdb_repo.get.side_effect = ConnectionError("simulated TMDB failure")
+
+    service = RequestsService(seerr_repo, match_repo, tmdb_repo)
+    results = list(service.stream_requests("all"))
+
+    assert len(results) == 1
+    row, source = results[0]
+    assert source == "live"
+    assert row["tmdb"] is None  # failure isolated, not raised
+
+
+def test_stream_requests_force_refresh_skips_cache():
+    seerr_repo = MagicMock()
+    seerr_repo.fetch_raw_requests.return_value = []
+    match_repo = MagicMock()
+    match_repo.get_all_matches.return_value = {}
+    tmdb_repo = MagicMock()
+
+    service = RequestsService(seerr_repo, match_repo, tmdb_repo)
+    list(service.stream_requests("all", force_refresh=True))
+
+    seerr_repo.get_cached_requests.assert_not_called()
+    seerr_repo.fetch_raw_requests.assert_called_once_with("all")
+
+
 def test_search_service_rejects_empty_query():
     service = SearchService(MagicMock())
     with pytest.raises(ValueError):

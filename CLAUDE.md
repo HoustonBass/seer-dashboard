@@ -156,6 +156,40 @@ changes, both sides need updating; check both.
   has a `tmdb` field (the record, or `None` on a failed lookup) alongside
   `match`. Rendered in `RequestList` (release year + director, inline) and
   `MatchPanel` (poster/genres/overview) on the frontend.
+
+### `/api/requests` streams NDJSON — don't revert to one big JSON array
+
+`RequestsService.stream_requests()` (not `get_requests()`, which still
+exists but blocks until the whole batch resolves — kept for callers that
+want a single response) yields `(row, source)` pairs as each request's title
++ TMDB data resolves, using `as_completed()` instead of `pool.map()` so rows
+arrive in *completion* order, not submission order. The controller
+(`app/controllers/requests_controller.py`) streams this as newline-delimited
+JSON (`application/x-ndjson`, one `{"row": ..., "source": ...}` per line) via
+a Flask generator response — this was a deliberate user ask ("stream results
+instead of waiting for alllll of them"), not incidental. Before this, a cold
+cache meant the UI showed nothing until all ~250 requests finished
+resolving; now the first rows appear within ~1s and the list fills in.
+
+Consequences worth knowing before touching this:
+- **Bypasses `SingleFlightCache` entirely.** A stream can't be replayed to a
+  second concurrent caller mid-flight the way a completed value can — two
+  concurrent live fetches for the same filter will each just do their own
+  work. Accepted tradeoff for a single-user tool; revisit if this ever needs
+  to support concurrent users.
+- **Cache-hit rows already carry their `tmdb` data** (baked in when they
+  were cached from a prior live fetch) and are replayed directly with no
+  re-fetch — don't add a redundant `tmdb_repo.get()` call in the cache-hit
+  path, that data's already there.
+- **Rows arrive out of Overseerr's "most recently added" order** (since
+  `as_completed()` yields whichever row's title+TMDB resolve fastest, not
+  request order) — `web/src/App.jsx`'s `load()` re-sorts by `id` descending
+  on every incremental update to compensate. If this ever moves off `id` as
+  the sort key, keep that re-sort in mind or the list will look shuffled.
+- Frontend reads the stream via `res.body.getReader()` in
+  `web/src/lib/api.js`'s `streamRequests()` — a plain NDJSON line-buffer
+  parser, not `EventSource`/SSE (which can't do the query-param-based GET we
+  already use as cleanly, and NDJSON needed no new dependency).
 - `app/repos/match_repo.py` — persistence for **chosen matches**
   (`data/matches.db`). Separate from the two caches above: those are
   disposable and safe to delete/rebuild from the API; `matches.db` holds
