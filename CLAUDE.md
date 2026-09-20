@@ -276,6 +276,14 @@ Consequences worth knowing before touching this:
   existed replay as `None` for it until that (query, format) naturally
   re-fetches — not a bug, just how the migration interacts with already-
   cached data; `--refresh`/force-refresh gets fresh values immediately.
+  `jacket_url_large` (Syndetics `.large`, same migration path) is a
+  separate, bigger image used only by the hover-zoom preview — using
+  `jacket_url` (`.medium`) there too looked visibly blurry once scaled up;
+  confirmed `.large` is a real ~3x bigger file, not just a same-size
+  re-encode. Same split for the TMDB poster: `MatchPanel` renders `w92` but
+  zooms to `w500` (`HoverZoomImage`'s `src` vs `zoomSrc` props) — don't
+  collapse these back to one size "to simplify," the whole point was fixing
+  visibly low-quality zoomed images.
 - **`MatchPanel` auto-searches on selection** — same call the Search button
   makes (respects cache, only goes live if actually uncached), not a
   separate "peek cache" endpoint (tried that first, unnecessarily complex —

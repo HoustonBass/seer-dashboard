@@ -11,6 +11,11 @@ def create_matches_blueprint(match_service):
         match_service.save_match(request.get_json(force=True))
         return jsonify({"ok": True})
 
+    @bp.route("/api/matches/unavailable", methods=["POST"])
+    def mark_unavailable():
+        match_service.mark_unavailable(request.get_json(force=True))
+        return jsonify({"ok": True})
+
     @bp.route("/api/matches/<int:request_id>", methods=["DELETE"])
     def delete_match(request_id):
         match_service.clear_match(request_id)

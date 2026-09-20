@@ -80,6 +80,7 @@ class LibraryRepo:
                 authors TEXT,
                 match_score INTEGER,
                 jacket_url TEXT,
+                jacket_url_large TEXT,
                 record_url TEXT,
                 fetched_at REAL NOT NULL
             );
@@ -97,7 +98,7 @@ class LibraryRepo:
         # table — this cache is disposable (safe to just delete the file),
         # but a lightweight migration is friendlier than a startup crash.
         existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(bibs)")}
-        for column in ("jacket_url", "record_url"):
+        for column in ("jacket_url", "jacket_url_large", "record_url"):
             if column not in existing_columns:
                 conn.execute(f"ALTER TABLE bibs ADD COLUMN {column} TEXT")
         conn.commit()
@@ -229,6 +230,9 @@ class LibraryRepo:
                     # scripts/discovery/search.md's Dune investigation), so
                     # this is often None and the frontend needs to handle that.
                     "jacket_url": jacket.get("medium") or jacket.get("small"),
+                    # "large" specifically for the hover-zoom preview — using
+                    # "medium" there too looked visibly blurry once scaled up.
+                    "jacket_url_large": jacket.get("large") or jacket.get("medium") or jacket.get("small"),
                     # Public record detail page — no auth needed to view (see
                     # scripts/discovery/search.md), so this is safe to link
                     # to directly for "see the real listing" in the UI.
@@ -268,10 +272,10 @@ class LibraryRepo:
                     """
                     INSERT INTO bibs (bib_id, title, subtitle, format, availability_status,
                         available_copies, total_copies, publication_date, call_number, authors,
-                        match_score, jacket_url, record_url, fetched_at)
+                        match_score, jacket_url, jacket_url_large, record_url, fetched_at)
                     VALUES (:bib_id, :title, :subtitle, :format, :availability_status,
                         :available_copies, :total_copies, :publication_date, :call_number, :authors,
-                        :match_score, :jacket_url, :record_url, :fetched_at)
+                        :match_score, :jacket_url, :jacket_url_large, :record_url, :fetched_at)
                     ON CONFLICT(bib_id) DO UPDATE SET
                         title=excluded.title,
                         subtitle=excluded.subtitle,
@@ -284,6 +288,7 @@ class LibraryRepo:
                         authors=excluded.authors,
                         match_score=excluded.match_score,
                         jacket_url=excluded.jacket_url,
+                        jacket_url_large=excluded.jacket_url_large,
                         record_url=excluded.record_url,
                         fetched_at=excluded.fetched_at
                     """,

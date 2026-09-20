@@ -52,11 +52,16 @@ export default function RequestList({ requests, selectedId, onSelect }) {
               {mediaStatusLabel(Number(r.media_status))}
             </span>
 
-            {r.match ? (
+            {r.match?.status === "matched" ? (
               <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap">
                 <span className="w-1.5 h-1.5 rounded-full bg-current" />
                 {r.match.bib_title}
                 {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
+              </span>
+            ) : r.match?.status === "unavailable" ? (
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                not in library
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">

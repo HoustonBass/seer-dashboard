@@ -203,3 +203,23 @@ def test_match_service_clear_delegates_to_repo():
     MatchService(match_repo).clear_match(5)
 
     match_repo.clear_match.assert_called_once_with(5)
+
+
+def test_match_service_mark_unavailable_passes_fields_through():
+    match_repo = MagicMock()
+    MatchService(match_repo).mark_unavailable({
+        "request_id": 1, "tmdb_id": 100, "media_type": "movie", "seerr_title": "A",
+    })
+
+    match_repo.set_unavailable.assert_called_once_with(
+        request_id=1, tmdb_id=100, media_type="movie", seerr_title="A",
+    )
+
+
+def test_match_service_mark_unavailable_defaults_missing_optional_fields_to_none():
+    match_repo = MagicMock()
+    MatchService(match_repo).mark_unavailable({"request_id": 1})
+
+    match_repo.set_unavailable.assert_called_once_with(
+        request_id=1, tmdb_id=None, media_type=None, seerr_title=None,
+    )

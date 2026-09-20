@@ -142,7 +142,17 @@ def test_search_extracts_jacket_url_and_handles_missing_jacket(repo):
     assert by_id["B2"]["jacket_url"] is None  # no jacket in the fixture at all
 
 
-def test_jacket_url_survives_a_cache_round_trip(repo):
+def test_search_extracts_jacket_url_large_for_the_hover_zoom_preview(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        records, _ = repo.search("terminator", "DVD")
+
+    by_id = {r["bib_id"]: r for r in records}
+    assert by_id["B1"]["jacket_url_large"] == "https://secure.syndetics.com/index.aspx?isbn=X/LC.JPG"  # "large" preferred
+    assert by_id["B2"]["jacket_url_large"] is None  # no jacket in the fixture at all
+
+
+def test_jacket_urls_survive_a_cache_round_trip(repo):
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
         repo.search("terminator", "DVD")
@@ -151,6 +161,7 @@ def test_jacket_url_survives_a_cache_round_trip(repo):
     assert source == "cache"
     by_id = {r["bib_id"]: r for r in cached_records}
     assert by_id["B1"]["jacket_url"] == "https://secure.syndetics.com/index.aspx?isbn=X/MC.GIF"
+    assert by_id["B1"]["jacket_url_large"] == "https://secure.syndetics.com/index.aspx?isbn=X/LC.JPG"
 
 
 def test_search_caches_second_call_without_more_http_calls(repo):

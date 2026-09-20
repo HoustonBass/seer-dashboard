@@ -35,6 +35,7 @@ export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
             {r.jacket_url ? (
               <HoverZoomImage
                 src={r.jacket_url}
+                zoomSrc={r.jacket_url_large}
                 zoomWidth={320}
                 className="w-10 h-14 object-cover rounded-sm shrink-0 border border-[var(--rule)] bg-[var(--surface)] cursor-zoom-in"
                 onError={(e) => {

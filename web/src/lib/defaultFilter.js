@@ -7,9 +7,9 @@
 const STORAGE_KEY = "seerr-dashboard:default-filter";
 const FALLBACK = "approved";
 
-// Must match the <option> values in App.jsx's filter dropdown — "unmatched"/
-// "matched" are client-side (see App.jsx's OVERSEERR_FILTERS), the rest map
-// straight to Overseerr's own filter values.
+// Must match the <option> values in App.jsx's filter dropdown —
+// "unmatched"/"matched"/"unavailable" are client-side (see App.jsx's
+// OVERSEERR_FILTERS), the rest map straight to Overseerr's own filter values.
 export const FILTER_OPTIONS = [
   { value: "all", label: "all" },
   { value: "approved", label: "approved" },
@@ -17,6 +17,7 @@ export const FILTER_OPTIONS = [
   { value: "processing", label: "processing" },
   { value: "unmatched", label: "unmatched" },
   { value: "matched", label: "matched" },
+  { value: "unavailable", label: "not in library" },
 ];
 
 export function getDefaultFilter() {

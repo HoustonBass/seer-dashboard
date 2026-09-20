@@ -59,6 +59,16 @@ export async function clearMatch(requestId) {
   return res.json();
 }
 
+export async function markUnavailable(match) {
+  const res = await fetch("/api/matches/unavailable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(match),
+  });
+  if (!res.ok) throw new Error(`markUnavailable failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchSettings() {
   const res = await fetch("/api/settings");
   if (!res.ok) throw new Error(`fetchSettings failed: ${res.status}`);

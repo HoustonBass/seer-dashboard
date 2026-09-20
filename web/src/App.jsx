@@ -74,10 +74,14 @@ export default function App() {
       : filter === "unmatched"
         // Already-available requests don't need a library match — there's
         // nothing left to hunt down, Overseerr already has it covered.
+        // "unavailable" requests also have a `match` row (status differs,
+        // see MatchPanel/RequestList), so !r.match already excludes them here.
         ? requests.filter((r) => !r.match && Number(r.media_status) !== 5)
         : filter === "matched"
-          ? requests.filter((r) => r.match)
-          : requests;
+          ? requests.filter((r) => r.match?.status === "matched")
+          : filter === "unavailable"
+            ? requests.filter((r) => r.match?.status === "unavailable")
+            : requests;
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">

@@ -19,5 +19,13 @@ class MatchService:
             bib_subtitle=data.get("bib_subtitle"),
         )
 
+    def mark_unavailable(self, data):
+        self.match_repo.set_unavailable(
+            request_id=data["request_id"],
+            tmdb_id=data.get("tmdb_id"),
+            media_type=data.get("media_type"),
+            seerr_title=data.get("seerr_title"),
+        )
+
     def clear_match(self, request_id):
         self.match_repo.clear_match(request_id)

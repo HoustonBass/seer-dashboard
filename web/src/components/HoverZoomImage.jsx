@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 // result rows and the match panel itself — sit inside a scrolling container
 // (`overflow-y-auto` for the sticky right panel), which clips anything that
 // tries to grow past its own bounds. A portal escapes that entirely.
-export default function HoverZoomImage({ src, alt = "", className = "", zoomWidth = 260, onError }) {
+export default function HoverZoomImage({ src, zoomSrc, alt = "", className = "", zoomWidth = 260, onError }) {
   const [rect, setRect] = useState(null);
   const imgRef = useRef(null);
 
@@ -34,7 +34,7 @@ export default function HoverZoomImage({ src, alt = "", className = "", zoomWidt
       {rect &&
         createPortal(
           <img
-            src={src}
+            src={zoomSrc || src}
             alt={alt}
             style={{ position: "fixed", top, left, width: zoomWidth, zIndex: 1000 }}
             className="rounded-md shadow-2xl border border-[var(--rule-strong)] pointer-events-none bg-[var(--surface)]"
