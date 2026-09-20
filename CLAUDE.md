@@ -251,6 +251,59 @@ Consequences worth knowing before touching this:
   **without** that repo's `@one-thd/sui-atomic-components` dependency (a
   Home Depot-internal package, not available/appropriate here); `Toggle.jsx`
   is hand-rolled instead.
+- `web/src/lib/defaultFilter.js` — separate from feature switches:
+  localStorage-only UI preference ("which filter is selected on page load"),
+  not a backend concern. Rendered inside `SettingsPopover` alongside feature
+  switches (same popover, different section) since that's where UI
+  preferences live, but don't confuse the two when extending either —
+  feature switches round-trip through `/api/settings`, this doesn't.
+- **"Matched" state is always green (`--available` token), everywhere** —
+  the request-list chip, the "Chosen" search-result button, the MatchPanel
+  banner. Explicit user ask ("I want to be proud I've found the match"), not
+  incidental — don't drift this back to a neutral/grey "just metadata" style.
+- **Cover art**: `LibraryRepo` extracts `briefInfo.jacket.medium` (falling
+  back to `.small`) as `jacket_url` per search result — BiblioCommons/
+  Syndetics cover images, not from TMDB. Often `None` (sparse catalog
+  records don't all have jacket art) — `SearchResultsTable` renders a dashed
+  placeholder box in that case rather than nothing, so rows stay aligned.
+  Persisted in the `bibs` cache table; existing `data/library_cache.db`
+  files get migrated with an `ALTER TABLE` on open (see `LibraryRepo._connect`)
+  rather than needing a manual delete. `record_url`
+  (`{base_url}/v2/record/{bib_id}`) rides the same migration path — the
+  public record detail page on the library's own site, no auth needed to
+  view, linked from each search result's title so "see the real listing"
+  is one click. Cache staleness note: rows cached before either column
+  existed replay as `None` for it until that (query, format) naturally
+  re-fetches — not a bug, just how the migration interacts with already-
+  cached data; `--refresh`/force-refresh gets fresh values immediately.
+- **`MatchPanel` auto-searches on selection** — same call the Search button
+  makes (respects cache, only goes live if actually uncached), not a
+  separate "peek cache" endpoint (tried that first, unnecessarily complex —
+  reverted; the actual ask was just "always search," cached or not).
+- **`filter` dropdown**: "unmatched"/"matched" are client-side (App.jsx's
+  `OVERSEERR_FILTERS` set decides what's a real Overseerr filter vs. what
+  needs `"all"` as the backend query + local `.filter()`). "unmatched"
+  additionally excludes already-`AVAILABLE` requests — nothing to hunt down
+  at the library if Overseerr already has it. Default filter is not
+  hardcoded; it reads from `defaultFilter.js` (see above).
+- **Right panel (`MatchPanel`) is sticky** (`lg:sticky lg:top-0
+  lg:self-start`, App.jsx) — explicit user ask so switching between requests
+  in a long list doesn't require re-scrolling to see it.
+
+### A note on live-reload disruption during backend edits
+
+Flask's `debug=True` reloader watches every `.py` file under `app/` and
+restarts the whole process on any change. If the user has their own instance
+running while you're editing `app/repos/`, `app/services/`, etc., **every
+save bounces their live server** — this looks like connection-refused/502
+errors on their end that have nothing to do with the code being wrong. This
+is separate from (and in addition to) the "don't `pkill`, use `APP_PORT` for
+your own testing" rule elsewhere in this file: even without ever touching
+their process directly, editing backend source while it's running under
+`debug=True` will restart it out from under them. Nothing to fix
+code-side — just don't be surprised by a transient error report that
+coincides with an edit, and mention the reload as the likely cause before
+assuming a real regression.
 - `web/vite.config.js` proxies `/api/*` to `:5001` in dev — components call
   `fetch("/api/...")` with no hardcoded host (see `web/src/lib/api.js`).
 - `web/.npmrc` pins `registry.npmjs.org` — **required**, don't remove it. This

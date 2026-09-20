@@ -130,13 +130,25 @@ re-fetching — see `app/lib/singleflight.py`.
 
 ### UI
 
-Two-pane workspace (request queue left, active request's match panel right),
-styled around a library card-catalog look — call numbers as spine-label
-chips, availability/status as pills, a serif heading. Light/dark theme
-follows your OS preference by default, overridable via the toggle in the
-header (persisted per-browser). The gear icon opens a settings panel listing
-every feature switch in `app/lib/feature_switch.py`'s `REGISTRY` — flipping
-one mutates the backend process's env vars live, no restart needed.
+Two-pane workspace (request queue left, active request's match panel right,
+sticky so it stays visible while you scroll the queue), styled around a
+library card-catalog look — call numbers as spine-label chips,
+availability/status as pills, real DVD cover art (from BiblioCommons'
+Syndetics jacket images) on each search result, a serif heading. A found
+match is always green, everywhere — the point is to feel like a win. Light/
+dark theme follows your OS preference by default, overridable via the toggle
+in the header (persisted per-browser).
+
+Selecting a request auto-runs the library search immediately (cached if
+you've searched it before, live otherwise) — no need to click Search first.
+The filter dropdown includes two client-side views, `unmatched` and
+`matched`, based on whether you've picked a library item for that request
+(`unmatched` also hides anything already available, since there's nothing
+left to find). The gear icon opens a settings panel with two kinds of
+things: feature switches (every entry in `app/lib/feature_switch.py`'s
+`REGISTRY`, flipping one mutates the backend process's env vars live, no
+restart needed) and a "default filter" preference (purely client-side,
+`web/src/lib/defaultFilter.js`).
 
 `web/.npmrc` pins the public npm registry for this project — the machine's
 global npm config here points at an internal-only registry that doesn't mirror
@@ -178,7 +190,7 @@ reproduced reliably in a test instead of needing a naturally slow call.
   `.env` (the v3 "API Key" specifically, not the v4 Read Access Token or
   OMDb). Wired into `RequestsService` and rendered in both `RequestList`
   and `MatchPanel`.
-- 54 passing tests in `tests/` (all mocked, no real credentials/network).
+- 57 passing tests in `tests/` (all mocked, no real credentials/network).
 - Hold placement (`scripts/library/hold.sh`) is not started.
 
 See `CLAUDE.md` for the plan and conventions any agent picking this up should

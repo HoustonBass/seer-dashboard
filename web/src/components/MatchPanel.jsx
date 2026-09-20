@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearMatch, saveMatch, searchLibrary } from "../lib/api";
 import SearchResultsTable from "./SearchResultsTable";
+
+const DEFAULT_FORMAT = "DVD";
 
 // Detail/action panel for one selected Overseerr request, styled as a
 // library "catalog slip" — search the library catalog, inspect ranked
@@ -8,29 +10,48 @@ import SearchResultsTable from "./SearchResultsTable";
 // RequestList stays a dumb list.
 export default function MatchPanel({ request, onMatchSaved }) {
   const [query, setQuery] = useState(request.title);
-  const [format, setFormat] = useState("DVD");
+  const [format, setFormat] = useState(DEFAULT_FORMAT);
   const [results, setResults] = useState([]);
   const [source, setSource] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const searchGeneration = useRef(0);
 
   useEffect(() => {
     setQuery(request.title);
+    setFormat(DEFAULT_FORMAT);
     setResults([]);
     setSource(null);
+    setError(null);
+    // Auto-search on selection — same call the Search button makes, so a
+    // prior cached search shows instantly and a never-searched title just
+    // runs live, same as clicking Search yourself would. runSearch reads
+    // `query`/`format` state, which the setters above haven't committed yet
+    // in this render, so pass the new values explicitly instead of relying
+    // on the (still-stale) closure.
+    runSearch(false, request.title, DEFAULT_FORMAT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request.id]);
 
-  async function runSearch(refresh = false) {
+  async function runSearch(refresh = false, overrideQuery, overrideFormat) {
+    // Guards against a race if the user clicks through requests faster than
+    // a search resolves — a slow, stale search landing after a newer
+    // selection shouldn't clobber that newer selection's results.
+    const generation = ++searchGeneration.current;
+    const q = overrideQuery ?? query;
+    const f = overrideFormat ?? format;
     setLoading(true);
     setError(null);
     try {
-      const data = await searchLibrary(query, format, { refresh });
+      const data = await searchLibrary(q, f, { refresh });
+      if (searchGeneration.current !== generation) return;
       setResults(data.results);
       setSource(data.source);
     } catch (e) {
+      if (searchGeneration.current !== generation) return;
       setError(e.message);
     } finally {
-      setLoading(false);
+      if (searchGeneration.current === generation) setLoading(false);
     }
   }
 

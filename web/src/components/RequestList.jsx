@@ -53,7 +53,8 @@ export default function RequestList({ requests, selectedId, onSelect }) {
             </span>
 
             {r.match ? (
-              <span className="mono text-xs px-1.5 py-0.5 rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] text-[var(--text-muted)] whitespace-nowrap">
+              <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
                 {r.match.bib_title}
                 {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
               </span>

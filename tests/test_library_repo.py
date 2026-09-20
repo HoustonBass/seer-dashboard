@@ -1,6 +1,7 @@
 """LibraryRepo tests, mocking authenticate() and app.repos.library_repo.http.get
 so these run with no network access and no real library credentials.
 """
+import sqlite3
 import threading
 from unittest.mock import patch
 
@@ -24,6 +25,12 @@ SEARCH_RESPONSE = {
                     "publicationDate": "2004",
                     "callNumber": "DVD 1",
                     "authors": [],
+                    "jacket": {
+                        "type": "SYNDETICS",
+                        "small": "https://secure.syndetics.com/index.aspx?isbn=X/SC.GIF",
+                        "medium": "https://secure.syndetics.com/index.aspx?isbn=X/MC.GIF",
+                        "large": "https://secure.syndetics.com/index.aspx?isbn=X/LC.JPG",
+                    },
                 },
                 "availability": {"status": "AVAILABLE", "availableCopies": 2, "totalCopies": 3},
             },
@@ -68,6 +75,52 @@ def repo(tmp_path):
     )
 
 
+def test_migrates_pre_existing_db_missing_jacket_url_column(tmp_path):
+    db_path = tmp_path / "old_schema.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE bibs (
+            bib_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            subtitle TEXT,
+            format TEXT,
+            availability_status TEXT,
+            available_copies INTEGER,
+            total_copies INTEGER,
+            publication_date TEXT,
+            call_number TEXT,
+            authors TEXT,
+            match_score INTEGER,
+            fetched_at REAL NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    # Should not raise — the missing column gets added, not crash on open.
+    repo = LibraryRepo(
+        base_url="https://library.example", username="u", password="p", db_path=db_path,
+    )
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        records, _ = repo.search("terminator", "DVD")
+
+    assert records[0]["jacket_url"] is not None
+    assert records[0]["record_url"] is not None
+
+
+def test_search_builds_public_record_url_from_base_url_and_bib_id(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        records, _ = repo.search("terminator", "DVD")
+
+    by_id = {r["bib_id"]: r for r in records}
+    assert by_id["B1"]["record_url"] == "https://library.example/v2/record/B1"
+    assert by_id["B2"]["record_url"] == "https://library.example/v2/record/B2"
+
+
 def test_search_ranks_exact_title_match_above_bare_title_match(repo):
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
@@ -77,6 +130,27 @@ def test_search_ranks_exact_title_match_above_bare_title_match(repo):
     assert [r["bib_id"] for r in records] == ["B1", "B2"]
     assert records[0]["match_score"] == 2  # "The Terminator" == normalize("terminator")
     assert records[1]["match_score"] == 1  # bare title "Terminator" also matches, but has a subtitle
+
+
+def test_search_extracts_jacket_url_and_handles_missing_jacket(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        records, _ = repo.search("terminator", "DVD")
+
+    by_id = {r["bib_id"]: r for r in records}
+    assert by_id["B1"]["jacket_url"] == "https://secure.syndetics.com/index.aspx?isbn=X/MC.GIF"  # "medium" preferred
+    assert by_id["B2"]["jacket_url"] is None  # no jacket in the fixture at all
+
+
+def test_jacket_url_survives_a_cache_round_trip(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        repo.search("terminator", "DVD")
+        cached_records, source = repo.search("terminator", "DVD")
+
+    assert source == "cache"
+    by_id = {r["bib_id"]: r for r in cached_records}
+    assert by_id["B1"]["jacket_url"] == "https://secure.syndetics.com/index.aspx?isbn=X/MC.GIF"
 
 
 def test_search_caches_second_call_without_more_http_calls(repo):

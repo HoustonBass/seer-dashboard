@@ -3,7 +3,14 @@ import MatchPanel from "./components/MatchPanel";
 import RequestList from "./components/RequestList";
 import SettingsPopover from "./components/SettingsPopover";
 import { streamRequests } from "./lib/api";
+import { FILTER_OPTIONS, getDefaultFilter } from "./lib/defaultFilter";
 import { useThemeMode } from "./theme/ThemeModeContext";
+
+// "unmatched"/"matched" aren't Overseerr request statuses — Overseerr has no
+// concept of our library match. They're client-side filters over whatever
+// got loaded, not a value passed to /api/requests?filter=; anything not in
+// this set falls back to "all" for the actual backend query.
+const OVERSEERR_FILTERS = new Set(["all", "approved", "available", "processing"]);
 
 // Mock FE — for testing matching strategies against the real Overseerr +
 // library APIs before this gets rebuilt as a Jellyfin plugin. Two-pane
@@ -14,7 +21,7 @@ import { useThemeMode } from "./theme/ThemeModeContext";
 export default function App() {
   const [requests, setRequests] = useState(null);
   const [requestsSource, setRequestsSource] = useState(null);
-  const [filter, setFilter] = useState("approved");
+  const [filter, setFilter] = useState(getDefaultFilter);
   const [selected, setSelected] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { mode, toggle: toggleTheme } = useThemeMode();
@@ -28,8 +35,9 @@ export default function App() {
     setRequests(null);
     setRequestsSource(null);
     const rows = [];
+    const backendFilter = OVERSEERR_FILTERS.has(filter) ? filter : "all";
 
-    await streamRequests(filter, { refresh }, ({ row, source }) => {
+    await streamRequests(backendFilter, { refresh }, ({ row, source }) => {
       if (loadGeneration.current !== generation) return;
       rows.push(row);
       // Rows resolve in completion order, not Overseerr's "most recently
@@ -50,6 +58,17 @@ export default function App() {
     load();
   }, [filter]);
 
+  const displayedRequests =
+    requests === null
+      ? null
+      : filter === "unmatched"
+        // Already-available requests don't need a library match — there's
+        // nothing left to hunt down, Overseerr already has it covered.
+        ? requests.filter((r) => !r.match && Number(r.media_status) !== 5)
+        : filter === "matched"
+          ? requests.filter((r) => r.match)
+          : requests;
+
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
       <header className="flex items-center gap-3 px-6 py-3 border-b border-[var(--rule)] bg-[var(--surface)]">
@@ -62,11 +81,11 @@ export default function App() {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         >
-          <option value="all">all</option>
-          <option value="approved">approved</option>
-          <option value="pending">pending</option>
-          <option value="available">available</option>
-          <option value="processing">processing</option>
+          {FILTER_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
 
         {requestsSource && <span className="text-xs text-[var(--text-faint)]">source: {requestsSource}</span>}
@@ -104,9 +123,9 @@ export default function App() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-px bg-[var(--rule)] border-b border-[var(--rule)]">
         <div className="bg-[var(--surface)]">
-          <RequestList requests={requests} selectedId={selected?.id} onSelect={setSelected} />
+          <RequestList requests={displayedRequests} selectedId={selected?.id} onSelect={setSelected} />
         </div>
-        <div className="bg-[var(--surface)] p-5">
+        <div className="bg-[var(--surface)] p-5 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto">
           {selected ? (
             <MatchPanel request={selected} onMatchSaved={load} />
           ) : (
