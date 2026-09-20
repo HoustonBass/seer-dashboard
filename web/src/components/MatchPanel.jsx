@@ -184,20 +184,15 @@ export default function MatchPanel({ request, onMatchChange }) {
       <div className="flex items-center gap-3 mt-2">
         {source && <p className="mono text-xs text-[var(--text-faint)]">source: {source}</p>}
         {error && <p className="text-sm text-[var(--accent)]">{error}</p>}
-        {request.match?.status !== "unavailable" && (
-          <button
-            onClick={handleMarkUnavailable}
-            className="ml-auto text-xs font-semibold text-[var(--text-faint)] hover:text-[var(--accent)] hover:underline"
-            title="Confirm the library doesn't have this, so it stops showing as unmatched"
-          >
-            Not in the library
-          </button>
-        )}
       </div>
 
-      {source && !loading && results.length === 0 && request.match?.status !== "unavailable" && (
+      {source && !loading && request.match?.status !== "unavailable" && (
         <div className="flex items-center gap-3 text-sm mt-3 bg-[var(--unmatched-bg)] border border-[var(--text-faint)]/30 rounded px-3 py-2.5">
-          <span className="text-[var(--text)]">No results in the library catalog for this search.</span>
+          <span className="text-[var(--text)]">
+            {results.length === 0
+              ? "No results in the library catalog for this search."
+              : "Not the right title? Confirm the library doesn't have this one."}
+          </span>
           <button
             onClick={handleMarkUnavailable}
             className="ml-auto shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)]"
