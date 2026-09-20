@@ -1,3 +1,5 @@
+import HoverZoomImage from "./HoverZoomImage";
+
 // Renders the ranked candidates from /api/search (same ranking as
 // scripts/library/search.sh — see scripts/discovery/search.md), as "index
 // cards" — a score mark, availability pill, call number as a spine-label
@@ -31,10 +33,10 @@ export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
             </span>
 
             {r.jacket_url ? (
-              <img
+              <HoverZoomImage
                 src={r.jacket_url}
-                alt=""
-                className="w-10 h-14 object-cover rounded-sm shrink-0 border border-[var(--rule)] bg-[var(--surface)]"
+                zoomWidth={320}
+                className="w-10 h-14 object-cover rounded-sm shrink-0 border border-[var(--rule)] bg-[var(--surface)] cursor-zoom-in"
                 onError={(e) => {
                   e.currentTarget.style.visibility = "hidden";
                 }}

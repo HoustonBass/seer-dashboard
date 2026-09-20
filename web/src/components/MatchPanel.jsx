@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { clearMatch, saveMatch, searchLibrary } from "../lib/api";
+import HoverZoomImage from "./HoverZoomImage";
 import SearchResultsTable from "./SearchResultsTable";
 
 const DEFAULT_FORMAT = "DVD";
@@ -89,10 +90,10 @@ export default function MatchPanel({ request, onMatchChange }) {
       {request.tmdb && (
         <div className="mt-3 flex gap-3 text-sm">
           {request.tmdb.poster_path && (
-            <img
+            <HoverZoomImage
               src={`https://image.tmdb.org/t/p/w92${request.tmdb.poster_path}`}
-              alt=""
-              className="w-14 rounded border border-[var(--rule)] shrink-0"
+              zoomWidth={320}
+              className="w-14 rounded border border-[var(--rule)] shrink-0 cursor-zoom-in"
             />
           )}
           <div className="min-w-0">
