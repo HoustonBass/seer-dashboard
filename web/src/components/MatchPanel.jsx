@@ -8,10 +8,13 @@ import MatchSearchBox from "./MatchSearchBox";
 // TV shows get a per-season accordion (see SeasonAccordion below) — the
 // library has one DVD per season, not per show, so "match" has to be
 // per-(request, season) for TV. See CLAUDE.md's TV-matching section.
-export default function MatchPanel({ request, onMatchChange }) {
+export default function MatchPanel({ request, onMatchChange, onAdvance }) {
   const isTv = request.type === "tv" && request.seasons?.length > 0;
 
-  async function handleChoose(seasonNumber, candidate) {
+  // `advance` comes from Option/Alt+click on the "Choose" button (see
+  // SearchResultsTable) — saves the match same as a plain click, then jumps
+  // to the next request that still needs one (App.jsx's advanceToNextUnmatched).
+  async function handleChoose(seasonNumber, candidate, advance) {
     await saveMatch({
       request_id: request.id,
       season_number: seasonNumber,
@@ -31,6 +34,7 @@ export default function MatchPanel({ request, onMatchChange }) {
       availability_status: candidate.availability_status,
       hold_id: null,
     });
+    if (advance) onAdvance?.();
   }
 
   // Places a REAL hold on the live account — see app/repos/library_repo.py's
@@ -121,7 +125,7 @@ export default function MatchPanel({ request, onMatchChange }) {
             defaultQuery={request.title}
             match={request.match}
             autoSearchKey={request.id}
-            onChoose={(candidate) => handleChoose(WHOLE_ITEM_SEASON, candidate)}
+            onChoose={(candidate, advance) => handleChoose(WHOLE_ITEM_SEASON, candidate, advance)}
             onMarkUnavailable={() => handleMarkUnavailable(WHOLE_ITEM_SEASON)}
             onClear={() => handleClear(WHOLE_ITEM_SEASON)}
             onPlaceHold={(match) => handlePlaceHold(WHOLE_ITEM_SEASON, match)}
@@ -242,7 +246,7 @@ function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavai
                   defaultQuery={`${request.title} season ${seasonNumber}`}
                   match={match}
                   autoSearchKey={`${request.id}-${seasonNumber}`}
-                  onChoose={(candidate) => onChoose(seasonNumber, candidate)}
+                  onChoose={(candidate, advance) => onChoose(seasonNumber, candidate, advance)}
                   onMarkUnavailable={() => onMarkUnavailable(seasonNumber)}
                   onClear={() => onClear(seasonNumber)}
                   onPlaceHold={(m) => onPlaceHold(seasonNumber, m)}

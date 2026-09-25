@@ -16,6 +16,20 @@ import { useThemeMode } from "./theme/ThemeModeContext";
 // this set falls back to "all" for the actual backend query.
 const OVERSEERR_FILTERS = new Set(["all", "approved", "available", "processing"]);
 
+// Already-available requests don't need a library match — there's nothing
+// left to hunt down, Overseerr already has it covered. For TV, "unmatched"
+// means at least one requested season still has no decision at all (neither
+// matched nor confirmed unavailable). Shared between the "unmatched" filter
+// and Option/Alt+click's "advance to the next unmatched" behavior below, so
+// the two can't drift apart on what "unmatched" means.
+function isUnmatchedRequest(r) {
+  if (Number(r.media_status) === 5) return false;
+  if (r.type === "tv" && r.seasons?.length > 0) {
+    return r.seasons.some((s) => !r.season_matches?.[s]);
+  }
+  return !r.match;
+}
+
 // Mock FE — for testing matching strategies against the real Overseerr +
 // library APIs before this gets rebuilt as a Jellyfin plugin. Two-pane
 // workspace layout: request queue on the left, the active request's match
@@ -110,17 +124,7 @@ export default function App() {
     requests === null
       ? null
       : filter === "unmatched"
-        // Already-available requests don't need a library match — there's
-        // nothing left to hunt down, Overseerr already has it covered. For
-        // TV, "unmatched" means at least one requested season still has no
-        // decision at all (neither matched nor confirmed unavailable).
-        ? requests.filter((r) => {
-            if (Number(r.media_status) === 5) return false;
-            if (r.type === "tv" && r.seasons?.length > 0) {
-              return r.seasons.some((s) => !r.season_matches?.[s]);
-            }
-            return !r.match;
-          })
+        ? requests.filter(isUnmatchedRequest)
         : filter === "matched"
           ? requests.filter((r) =>
               r.type === "tv" && r.seasons?.length > 0
@@ -147,6 +151,20 @@ export default function App() {
       : displayedRequests.filter((r) =>
           [r.title, r.requested_by, r.tmdb?.director].some((field) => field?.toLowerCase().includes(searchNorm)),
         );
+
+  // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
+  // the match and jumps straight to the next request still needing one —
+  // "next" means the next row below the current selection in whatever order
+  // the left pane is currently showing (respects the active filter/search),
+  // not the full unfiltered request list. No-op if nothing after the
+  // current selection still needs a match.
+  function advanceToNextUnmatched() {
+    if (!selected || !searchedRequests) return;
+    const idx = searchedRequests.findIndex((r) => r.id === selected.id);
+    if (idx === -1) return;
+    const next = searchedRequests.slice(idx + 1).find(isUnmatchedRequest);
+    if (next) selectRequest(next);
+  }
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -243,7 +261,7 @@ export default function App() {
           </div>
           <div className="bg-[var(--surface)] p-5 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto">
             {selected ? (
-              <MatchPanel request={selected} onMatchChange={updateLocalMatch} />
+              <MatchPanel request={selected} onMatchChange={updateLocalMatch} onAdvance={advanceToNextUnmatched} />
             ) : (
               <p className="text-sm text-[var(--text-faint)]">Select a request to search the library.</p>
             )}
