@@ -17,4 +17,10 @@ def create_search_blueprint(search_service):
             return jsonify({"error": str(e)}), 400
         return jsonify({"source": source, "results": results})
 
+    @bp.route("/api/search/<bib_id>/edition")
+    def edition(bib_id):
+        force_refresh = request.args.get("refresh") == "1"
+        edition, source = search_service.get_bib_edition(bib_id, force_refresh=force_refresh)
+        return jsonify({"source": source, "edition": edition})
+
     return bp

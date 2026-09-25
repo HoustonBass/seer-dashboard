@@ -221,6 +221,19 @@ def test_search_service_flags_results_already_matched_to_a_different_request():
     assert records[1]["existing_match"] == {"request_id": 42, "seerr_title": "Despicable Me 4", "media_type": "movie"}
 
 
+def test_search_service_get_bib_edition_delegates_to_repo():
+    library_repo = MagicMock()
+    library_repo.get_bib_edition.return_value = ({"edition": "Two-disc special edition."}, "live")
+    match_repo = MagicMock()
+
+    service = SearchService(library_repo, match_repo)
+    edition, source = service.get_bib_edition("B1", force_refresh=True)
+
+    library_repo.get_bib_edition.assert_called_once_with("B1", force_refresh=True)
+    assert source == "live"
+    assert edition == {"edition": "Two-disc special edition."}
+
+
 def test_match_service_save_passes_all_fields_through():
     match_repo = MagicMock()
     MatchService(match_repo).save_match({

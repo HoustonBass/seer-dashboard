@@ -26,6 +26,7 @@ DB_PATH = data_dir() / "library_cache.db"
 AUTH_CACHE_PATH = data_dir() / "library_auth_cache"
 DEFAULT_TTL_SECONDS = 6 * 60 * 60  # availability changes during the day, but not by the minute
 ACCOUNT_SUMMARY_TTL_SECONDS = 5 * 60  # checkouts/holds change with real-world activity — short TTL, same reasoning as SeerrRepo's request cache
+EDITION_TTL_SECONDS = 24 * 60 * 60  # a catalog record's edition/publication note never changes — same reasoning as TmdbRepo's TTL
 TEST_DELAY_ENV_VAR = "LIBRARY_TEST_FETCH_DELAY_SECONDS"
 # bc_access_token/session_id's real lifetime is undocumented (see
 # scripts/discovery/auth.md) — this is a conservative guess, not a confirmed
@@ -114,6 +115,13 @@ class LibraryRepo:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 checked_out INTEGER NOT NULL,
                 on_hold INTEGER NOT NULL,
+                fetched_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS bib_editions (
+                bib_id TEXT PRIMARY KEY,
+                edition TEXT,
+                publication_note TEXT,
+                description TEXT,
                 fetched_at REAL NOT NULL
             );
             """
@@ -320,6 +328,98 @@ class LibraryRepo:
             )
         records.sort(key=lambda r: (-r["match_score"], r["publication_date"] or ""))
         return records
+
+    # -- edition detail (disambiguating same-title search results) ----------
+    #
+    # A bare-title search (see search() above) often returns several bibs
+    # that share the same normalized title and publication year — not
+    # duplicates, but distinct physical editions of the same release (e.g.
+    # "Rental" vs "Two-disc special edition." vs "Anamorphic widescreen.").
+    # None of that distinction is visible from bibs/search's briefInfo; it
+    # only shows up in catalogBibs' per-record `brief.edition` field. Fetched
+    # on demand per bib_id (human-triggered from the frontend), not eagerly
+    # for every search result — see CLAUDE.md's "known unknowns" note this
+    # was deferred from.
+
+    @staticmethod
+    def _extract_field(fields, field_name):
+        for field in fields or []:
+            for item in field.get("items", []):
+                if item.get("fieldName") != field_name:
+                    continue
+                values = (item.get("fieldValues") or [{}])[0].get("primary", {}).get("values") or []
+                if values:
+                    return values[0]
+        return None
+
+    def _fetch_bib_edition_live(self, bib_id):
+        access_token, session_id = self._get_auth()
+        response = self._catalog_bib_request(bib_id, access_token, session_id)
+
+        if response.status_code in (401, 403):
+            access_token, session_id = self._get_auth(force_refresh=True)
+            response = self._catalog_bib_request(bib_id, access_token, session_id)
+
+        response.raise_for_status()
+        data = response.json()
+        record = data["entities"]["catalogBibs"][bib_id]
+        brief = record["brief"]
+        return {
+            "bib_id": bib_id,
+            "edition": brief.get("edition"),
+            "description": brief.get("description"),
+            "publication_note": self._extract_field(record.get("fields"), "PUBLICATION"),
+        }
+
+    def _catalog_bib_request(self, bib_id, access_token, session_id):
+        return http.get(
+            f"{self.gateway_url}/v2/libraries/{self.agency}/catalogBibs/{bib_id}",
+            headers={
+                "Accept": "application/json",
+                "X-Access-Token": access_token,
+                "X-Session-Id": session_id,
+            },
+            timeout=15,
+        )
+
+    def _edition_cache_get(self, bib_id, ttl):
+        cutoff = time.time() - ttl
+        with self._db_lock:
+            row = self._conn.execute(
+                "SELECT * FROM bib_editions WHERE bib_id = ? AND fetched_at >= ?",
+                (bib_id, cutoff),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _edition_cache_set(self, edition):
+        with self._db_lock:
+            self._conn.execute(
+                """
+                INSERT INTO bib_editions (bib_id, edition, publication_note, description, fetched_at)
+                VALUES (:bib_id, :edition, :publication_note, :description, :fetched_at)
+                ON CONFLICT(bib_id) DO UPDATE SET
+                    edition=excluded.edition,
+                    publication_note=excluded.publication_note,
+                    description=excluded.description,
+                    fetched_at=excluded.fetched_at
+                """,
+                {**edition, "fetched_at": time.time()},
+            )
+            self._conn.commit()
+
+    def get_bib_edition(self, bib_id, ttl=EDITION_TTL_SECONDS, force_refresh=False):
+        """Returns (edition_dict, source) where source is "cache" or "live"."""
+
+        def get_cached():
+            cached = self._edition_cache_get(bib_id, ttl)
+            return {k: v for k, v in cached.items() if k != "fetched_at"} if cached else None
+
+        def fetch_and_cache():
+            edition = self._fetch_bib_edition_live(bib_id)
+            self._edition_cache_set(edition)
+            return edition
+
+        return self._singleflight.get_or_fetch(f"edition:{bib_id}", get_cached, fetch_and_cache, force_refresh=force_refresh)
 
     # -- account summary (checkouts/holds — see scripts/discovery/account.md) --
 

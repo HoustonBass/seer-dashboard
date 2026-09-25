@@ -48,6 +48,18 @@ export async function searchLibrary(query, format = "", { refresh = false } = {}
   return res.json();
 }
 
+// Disambiguates same-title/same-year search results that briefInfo alone
+// can't tell apart (e.g. three "Pacific Rim" DVDs that are actually a
+// rental edition, a two-disc special edition, and an anamorphic widescreen
+// release) — see LibraryRepo.get_bib_edition. Fetched on demand per result,
+// not baked into every /api/search response, since it's an extra live call
+// per bib_id.
+export async function fetchBibEdition(bibId) {
+  const res = await fetch(`/api/search/${bibId}/edition`);
+  if (!res.ok) throw new Error(`fetchBibEdition failed: ${res.status}`);
+  return res.json();
+}
+
 // `match`/the body for markUnavailable below may include `season_number` —
 // omit it for a whole-item (movie) decision, include it for a specific TV
 // season. See app/repos/match_repo.py's WHOLE_ITEM_SEASON for the default.

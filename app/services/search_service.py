@@ -24,6 +24,12 @@ class SearchService:
         ]
         return enriched, source
 
+    def get_bib_edition(self, bib_id, force_refresh=False):
+        """Disambiguates same-title search results — see
+        LibraryRepo.get_bib_edition for why this exists as its own on-demand
+        call instead of being baked into every search result."""
+        return self.library_repo.get_bib_edition(bib_id, force_refresh=force_refresh)
+
     @staticmethod
     def _existing_match_summary(match):
         if match is None:

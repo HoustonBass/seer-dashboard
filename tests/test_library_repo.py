@@ -10,6 +10,35 @@ import pytest
 
 from app.repos.library_repo import LibraryRepo
 
+# Mirrors a real capture (three "Pacific Rim" bibs, same title/year,
+# distinguished only by catalogBibs' brief.edition — see search.md's
+# disambiguation note).
+CATALOG_BIB_RESPONSE = {
+    "entities": {
+        "catalogBibs": {
+            "B1": {
+                "brief": {
+                    "edition": "Two-disc special edition.",
+                    "description": "A war rages between humanity and monstrous creatures.",
+                },
+                "fields": [
+                    {
+                        "category": "DETAILS",
+                        "items": [
+                            {
+                                "fieldName": "PUBLICATION",
+                                "fieldValues": [
+                                    {"primary": {"values": ["Burbank, CA : Warner Bros. Entertainment, c2013."]}}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    }
+}
+
 # Mirrors the real ambiguity documented in scripts/discovery/search.md:
 # searching "terminator" should rank "The Terminator" (exact full-title
 # match) above "Terminator: Dark Fate" (only the bare title matches).
@@ -193,6 +222,35 @@ def test_force_refresh_bypasses_cache(repo):
         _, source = repo.search("terminator", "DVD", force_refresh=True)
 
     assert source == "live"
+
+
+def test_get_bib_edition_extracts_edition_and_publication_note(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(CATALOG_BIB_RESPONSE)):
+        edition, source = repo.get_bib_edition("B1")
+
+    assert source == "live"
+    assert edition["edition"] == "Two-disc special edition."
+    assert edition["publication_note"] == "Burbank, CA : Warner Bros. Entertainment, c2013."
+    assert "monstrous creatures" in edition["description"]
+
+
+def test_get_bib_edition_caches_second_call_without_more_http_calls(repo):
+    call_count = {"n": 0}
+
+    def counting_get(*args, **kwargs):
+        call_count["n"] += 1
+        return FakeResponse(CATALOG_BIB_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", side_effect=counting_get):
+        repo.get_bib_edition("B1")
+        calls_after_first = call_count["n"]
+        edition, source = repo.get_bib_edition("B1")
+
+    assert source == "cache"
+    assert call_count["n"] == calls_after_first
+    assert edition["edition"] == "Two-disc special edition."
 
 
 def test_concurrent_search_is_thread_safe_and_single_flight(repo, monkeypatch):
