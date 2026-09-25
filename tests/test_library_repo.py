@@ -3,6 +3,7 @@ so these run with no network access and no real library credentials.
 """
 import sqlite3
 import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -72,6 +73,9 @@ def repo(tmp_path):
         agency="testagency",
         gateway_url="https://gateway.example",
         db_path=tmp_path / "library.db",
+        # Isolated per test — must never read/write the real shared cache
+        # file that scripts/library/auth.sh also uses.
+        auth_cache_path=tmp_path / "auth_cache",
     )
 
 
@@ -102,6 +106,7 @@ def test_migrates_pre_existing_db_missing_jacket_url_column(tmp_path):
     # Should not raise — the missing column gets added, not crash on open.
     repo = LibraryRepo(
         base_url="https://library.example", username="u", password="p", db_path=db_path,
+        auth_cache_path=tmp_path / "auth_cache",
     )
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
@@ -246,12 +251,78 @@ def test_expired_auth_cache_triggers_a_fresh_login(repo, monkeypatch):
     with patch.object(repo, "authenticate", side_effect=counting_authenticate), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
         repo.search("terminator", "DVD")
-        # Force the cached auth to look expired without waiting AUTH_TTL_SECONDS for real.
+        # Force both caches to look expired without waiting AUTH_TTL_SECONDS for
+        # real — the in-memory one AND the on-disk shared cache, since a fresh
+        # login now only happens once neither has a still-valid entry (see
+        # _get_auth's shared-file fallback).
         access_token, session_id, _ = repo._auth_cache
         repo._auth_cache = (access_token, session_id, 0)
+        repo._write_shared_auth_cache(access_token, session_id, cached_at=0)
         repo.search("dune", "DVD")
 
     assert auth_calls["n"] == 2
+
+
+def test_still_valid_shared_cache_file_avoids_a_fresh_login_even_if_memory_cache_is_stale(repo, tmp_path):
+    """Regression test for the shared cache added to reduce real login
+    volume (see scripts/discovery/auth.md's account-lock note) — a process
+    restart (fresh LibraryRepo, empty in-memory cache) should NOT force a
+    new login if another process/script already wrote a still-valid entry
+    to the shared file."""
+    auth_calls = {"n": 0}
+
+    def counting_authenticate():
+        auth_calls["n"] += 1
+        return "token", "session"
+
+    with patch.object(repo, "authenticate", side_effect=counting_authenticate), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        repo.search("terminator", "DVD")  # writes the shared cache file
+
+    # Simulate a brand-new process: fresh instance, empty in-memory cache,
+    # but pointed at the same shared cache file the first repo just wrote.
+    fresh_repo = LibraryRepo(
+        base_url="https://library.example", username="user", password="pw",
+        agency="testagency", gateway_url="https://gateway.example",
+        db_path=tmp_path / "library2.db",
+        auth_cache_path=repo._auth_cache_path,
+    )
+    with patch.object(fresh_repo, "authenticate", side_effect=counting_authenticate), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
+        fresh_repo.search("dune", "DVD")
+
+    assert auth_calls["n"] == 1  # the second instance reused the shared file, no second login
+
+
+def test_read_shared_auth_cache_returns_none_for_missing_file(repo):
+    assert repo._read_shared_auth_cache() is None
+
+
+def test_read_shared_auth_cache_returns_none_for_malformed_file(repo):
+    repo._auth_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    repo._auth_cache_path.write_text("not the expected format at all\n")
+    assert repo._read_shared_auth_cache() is None
+
+
+def test_write_then_read_shared_auth_cache_round_trips(repo):
+    repo._write_shared_auth_cache("tok-abc", "sess-xyz", cached_at=12345.0)
+    assert repo._read_shared_auth_cache() == ("tok-abc", "sess-xyz", 12345.0)
+
+
+def test_write_shared_auth_cache_sets_restrictive_permissions(repo):
+    import stat
+
+    repo._write_shared_auth_cache("tok-abc", "sess-xyz")
+    mode = stat.S_IMODE(repo._auth_cache_path.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_force_refresh_bypasses_shared_cache_even_if_valid(repo):
+    repo._write_shared_auth_cache("stale-token", "stale-session", cached_at=time.time())
+    with patch.object(repo, "authenticate", return_value=("fresh-token", "fresh-session")):
+        access_token, session_id = repo._get_auth(force_refresh=True)
+    # force_refresh must hit a real login, not the (still fresh) shared file
+    assert (access_token, session_id) == ("fresh-token", "fresh-session")
 
 
 def test_401_from_search_triggers_one_re_login_and_retry(repo):
@@ -273,6 +344,227 @@ def test_401_from_search_triggers_one_re_login_and_retry(repo):
     assert auth_calls["n"] == 2  # initial login + one forced re-login after the 401
     assert source == "live"
     assert len(records) == 2
+
+
+CHECKOUTS_RESPONSE = {
+    "entities": {
+        "bibs": {
+            "B1": {"briefInfo": {"format": "DVD", "title": "Ford V Ferrari"}},
+            "B2": {"briefInfo": {"format": "BK", "title": "Empire of Storms"}},
+        },
+        "checkouts": {
+            "C1": {"metadataId": "B1", "materialType": "PHYSICAL"},
+            "C2": {"metadataId": "B2", "materialType": "PHYSICAL"},
+        },
+    },
+    "borrowing": {"checkouts": {"items": ["C1", "C2"], "pagination": {"count": 2, "page": 1, "limit": 25, "pages": 1}}},
+}
+
+HOLDS_RESPONSE = {
+    "entities": {
+        "bibs": {
+            "B3": {"briefInfo": {"format": "DVD", "title": "Paddington 2"}},
+            "B4": {"briefInfo": {"format": "DVD", "title": "Captain America"}},
+        },
+        "holds": {
+            "H1": {"metadataId": "B3", "materialType": "PHYSICAL"},
+            "H2": {"metadataId": "B4", "materialType": "PHYSICAL"},
+        },
+    },
+    "borrowing": {"holds": {"items": ["H1", "H2"], "pagination": {"count": 2, "page": 1, "limit": 25, "pages": 1}}},
+}
+
+
+def test_get_dvd_activity_count_joins_bibs_and_counts_dvds_only(repo):
+    def routed_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/checkouts"):
+            return FakeResponse(CHECKOUTS_RESPONSE)
+        return FakeResponse(HOLDS_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.get", side_effect=routed_get):
+        summary, source = repo.get_dvd_activity_count()
+
+    assert source == "live"
+    assert summary == {"checked_out": 1, "on_hold": 2, "total": 3}  # only DVD-format items count
+
+
+def test_get_dvd_activity_count_derives_account_id_as_session_suffix_plus_one(repo):
+    captured_account_ids = []
+
+    def capturing_get(url, headers=None, params=None, timeout=None):
+        captured_account_ids.append(params["accountId"])
+        return FakeResponse(CHECKOUTS_RESPONSE if url.endswith("/checkouts") else HOLDS_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.get", side_effect=capturing_get):
+        repo.get_dvd_activity_count()
+
+    assert all(account_id == 3006586697 for account_id in captured_account_ids)
+
+
+def test_get_dvd_activity_count_second_call_hits_cache(repo):
+    call_count = {"n": 0}
+
+    def counting_get(url, headers=None, params=None, timeout=None):
+        call_count["n"] += 1
+        return FakeResponse(CHECKOUTS_RESPONSE if url.endswith("/checkouts") else HOLDS_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.get", side_effect=counting_get):
+        repo.get_dvd_activity_count()
+        calls_after_first = call_count["n"]
+        summary, source = repo.get_dvd_activity_count()
+
+    assert source == "cache"
+    assert call_count["n"] == calls_after_first
+    assert summary == {"checked_out": 1, "on_hold": 2, "total": 3}
+
+
+def test_get_dvd_activity_count_force_refresh_bypasses_cache(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch(
+             "app.repos.library_repo.http.get",
+             side_effect=lambda url, headers=None, params=None, timeout=None: (
+                 FakeResponse(CHECKOUTS_RESPONSE) if url.endswith("/checkouts") else FakeResponse(HOLDS_RESPONSE)
+             ),
+         ):
+        repo.get_dvd_activity_count()
+        _, source = repo.get_dvd_activity_count(force_refresh=True)
+
+    assert source == "live"
+
+
+def test_get_dvd_activity_count_paginates_across_multiple_pages(repo):
+    page1 = {
+        "entities": {
+            "bibs": {"B1": {"briefInfo": {"format": "DVD", "title": "A"}}},
+            "checkouts": {"C1": {"metadataId": "B1", "materialType": "PHYSICAL"}},
+        },
+        "borrowing": {"checkouts": {"items": ["C1"], "pagination": {"count": 2, "page": 1, "limit": 1, "pages": 2}}},
+    }
+    page2 = {
+        "entities": {
+            "bibs": {"B2": {"briefInfo": {"format": "DVD", "title": "B"}}},
+            "checkouts": {"C2": {"metadataId": "B2", "materialType": "PHYSICAL"}},
+        },
+        "borrowing": {"checkouts": {"items": ["C2"], "pagination": {"count": 2, "page": 2, "limit": 1, "pages": 2}}},
+    }
+    empty_holds = {"entities": {"bibs": {}, "holds": {}}, "borrowing": {"holds": {"items": [], "pagination": {"count": 0, "page": 1, "limit": 25, "pages": 1}}}}
+
+    def routed_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/holds"):
+            return FakeResponse(empty_holds)
+        return FakeResponse(page1 if params["page"] == 1 else page2)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.get", side_effect=routed_get):
+        summary, _ = repo.get_dvd_activity_count()
+
+    assert summary["checked_out"] == 2  # both pages' DVDs counted
+
+
+def test_get_dvd_activity_count_401_triggers_one_re_login_and_retry(repo):
+    auth_calls = {"n": 0}
+
+    def counting_authenticate():
+        auth_calls["n"] += 1
+        return f"token-{auth_calls['n']}", "sess-3006586696"
+
+    empty_holds = {"entities": {"bibs": {}, "holds": {}}, "borrowing": {"holds": {"items": [], "pagination": {"count": 0, "page": 1, "limit": 25, "pages": 1}}}}
+    checkouts_responses = iter([FakeResponse({}, status_code=401), FakeResponse(CHECKOUTS_RESPONSE)])
+
+    def routed_get(url, headers=None, params=None, timeout=None):
+        if url.endswith("/checkouts"):
+            return next(checkouts_responses)
+        return FakeResponse(empty_holds)
+
+    with patch.object(repo, "authenticate", side_effect=counting_authenticate), \
+         patch("app.repos.library_repo.http.get", side_effect=routed_get):
+        summary, source = repo.get_dvd_activity_count()
+
+    assert auth_calls["n"] == 2
+    assert source == "live"
+    assert summary["checked_out"] == 1
+
+
+HOLD_PLACED_RESPONSE = {
+    "id": "S171C852280",
+    "entities": {
+        "holds": {
+            "11939290": {
+                "actions": ["cancel", "suspend", "updateLocation", "updateExpiry"],
+                "metadataId": "S171C852280",
+                "holdsId": "11939290",
+                "bibTitle": "Pirates of the Caribbean, on stranger tides",
+                "holdsPosition": 1,
+                "status": "NOT_YET_AVAILABLE",
+                "materialType": "PHYSICAL",
+                "pickupLocation": {"code": "MILTON", "name": "Milton Branch", "ips": []},
+                "holdPlacedDate": "2026-09-20",
+                "expiryDate": "2027-07-17",
+            }
+        }
+    },
+    "successCount": 1,
+}
+
+
+def test_place_hold_sends_confirmed_body_shape(repo):
+    captured = {}
+
+    def capturing_post(url, headers=None, params=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse(HOLD_PLACED_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.post", side_effect=capturing_post):
+        result = repo.place_hold("S171C852280")
+
+    assert captured["url"].endswith("/holds")
+    assert captured["json"] == {
+        "metadataId": "S171C852280",
+        "materialType": "PHYSICAL",
+        "accountId": 3006586697,
+        "enableSingleClickHolds": False,
+        "materialParams": {"branchId": "MILTON", "expiryDate": None, "errorMessageLocale": "en-US"},
+    }
+    assert result == {
+        "hold_id": "11939290", "status": "NOT_YET_AVAILABLE",
+        "expiry_date": "2027-07-17", "pickup_location": "Milton Branch",
+    }
+
+
+def test_place_hold_uses_explicit_branch_id_override(repo):
+    captured = {}
+
+    def capturing_post(url, headers=None, params=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse(HOLD_PLACED_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "sess-3006586696")), \
+         patch("app.repos.library_repo.http.post", side_effect=capturing_post):
+        repo.place_hold("S171C852280", branch_id="OTHER_BRANCH")
+
+    assert captured["json"]["materialParams"]["branchId"] == "OTHER_BRANCH"
+
+
+def test_place_hold_401_triggers_one_re_login_and_retry(repo):
+    auth_calls = {"n": 0}
+
+    def counting_authenticate():
+        auth_calls["n"] += 1
+        return f"token-{auth_calls['n']}", "sess-3006586696"
+
+    responses = iter([FakeResponse({}, status_code=401), FakeResponse(HOLD_PLACED_RESPONSE)])
+
+    with patch.object(repo, "authenticate", side_effect=counting_authenticate), \
+         patch("app.repos.library_repo.http.post", side_effect=lambda *a, **k: next(responses)):
+        result = repo.place_hold("S171C852280")
+
+    assert auth_calls["n"] == 2
+    assert result["hold_id"] == "11939290"
 
 
 def test_authenticate_scrapes_csrf_token_and_reads_session_cookies(tmp_path):

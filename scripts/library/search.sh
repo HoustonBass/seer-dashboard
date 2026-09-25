@@ -44,10 +44,16 @@ LIBRARY_GATEWAY_URL="${LIBRARY_GATEWAY_URL:-https://gateway.bibliocommons.com}"
 
 eval "$("$SCRIPT_DIR/auth.sh")"
 
+# The search backend is Solr-based and treats bare "?"/"*" as wildcard
+# operators, not literal punctuation — e.g. a trailing "?" in "O Brother,
+# Where Art Thou?" silently zeroes out the result count instead of matching
+# the literal title. Escape them so title text is always searched literally.
+ESCAPED_QUERY="$(printf '%s' "$QUERY" | sed 's/[?*]/\\&/g')"
+
 if [ -n "$FORMAT" ]; then
-  SEARCH_QUERY="formatcode:($FORMAT) $QUERY"
+  SEARCH_QUERY="formatcode:($FORMAT) $ESCAPED_QUERY"
 else
-  SEARCH_QUERY="$QUERY"
+  SEARCH_QUERY="$ESCAPED_QUERY"
 fi
 
 RESPONSE="$(curl -sS -G "$LIBRARY_GATEWAY_URL/v2/libraries/$LIBRARY_AGENCY/bibs/search" \

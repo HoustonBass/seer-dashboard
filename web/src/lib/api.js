@@ -2,6 +2,11 @@
 // swapping the backend later (e.g. for the real Jellyfin plugin's API) means
 // changing this file, not every component that calls it.
 
+// Mirrors app/repos/match_repo.py's WHOLE_ITEM_SEASON — movies (and any
+// other whole-item decision) always use this; TV seasons use Overseerr's
+// real season numbers, which are always >= 1, so this can never collide.
+export const WHOLE_ITEM_SEASON = 0;
+
 // /api/search returns { source: "cache"|"live", results } so the FE can show
 // whether a response came from the repo's SQLite cache or a live API call —
 // see app/repos/*_repo.py.
@@ -43,6 +48,9 @@ export async function searchLibrary(query, format = "", { refresh = false } = {}
   return res.json();
 }
 
+// `match`/the body for markUnavailable below may include `season_number` —
+// omit it for a whole-item (movie) decision, include it for a specific TV
+// season. See app/repos/match_repo.py's WHOLE_ITEM_SEASON for the default.
 export async function saveMatch(match) {
   const res = await fetch("/api/matches", {
     method: "POST",
@@ -53,8 +61,11 @@ export async function saveMatch(match) {
   return res.json();
 }
 
-export async function clearMatch(requestId) {
-  const res = await fetch(`/api/matches/${requestId}`, { method: "DELETE" });
+// seasonNumber omitted -> whole-item decision (movies). Passed -> that TV
+// season specifically — see app/repos/match_repo.py's WHOLE_ITEM_SEASON.
+export async function clearMatch(requestId, seasonNumber) {
+  const url = seasonNumber === undefined ? `/api/matches/${requestId}` : `/api/matches/${requestId}/${seasonNumber}`;
+  const res = await fetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(`clearMatch failed: ${res.status}`);
   return res.json();
 }
@@ -66,6 +77,77 @@ export async function markUnavailable(match) {
     body: JSON.stringify(match),
   });
   if (!res.ok) throw new Error(`markUnavailable failed: ${res.status}`);
+  return res.json();
+}
+
+// Quick-add: "found this in the library, want it in Overseerr too" — search
+// TMDB for candidates matching a library title, then create the Overseerr
+// request and mark it matched in one action. See MatchPanel's SeasonAccordion note:
+// TV candidates only create the request (whole series); marking a specific
+// season's match still happens through the normal season accordion once the
+// new request shows up in the list, since a library search result doesn't
+// reliably tell us which season it corresponds to.
+export async function searchTmdb(query) {
+  const params = new URLSearchParams({ query });
+  const res = await fetch(`/api/quick-add/search?${params}`);
+  if (!res.ok) throw new Error(`searchTmdb failed: ${res.status}`);
+  return res.json();
+}
+
+export async function quickAdd(payload) {
+  const res = await fetch("/api/quick-add", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error || `quickAdd failed: ${res.status}`);
+  return body;
+}
+
+// Failed quick-adds: attempts that couldn't reach Overseerr (see
+// app/repos/failed_quick_add_repo.py) — saved instead of lost so they can be
+// retried once the connection's back, via the header's FailedQuickAdds
+// popover.
+export async function listFailedQuickAdds() {
+  const res = await fetch("/api/quick-add/failed");
+  if (!res.ok) throw new Error(`listFailedQuickAdds failed: ${res.status}`);
+  return res.json();
+}
+
+export async function retryFailedQuickAdd(failedId) {
+  const res = await fetch(`/api/quick-add/failed/${failedId}/retry`, { method: "POST" });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error || `retryFailedQuickAdd failed: ${res.status}`);
+  return body;
+}
+
+export async function dismissFailedQuickAdd(failedId) {
+  const res = await fetch(`/api/quick-add/failed/${failedId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`dismissFailedQuickAdd failed: ${res.status}`);
+  return res.json();
+}
+
+// Places a REAL hold on the live library account — see
+// app/repos/library_repo.py's place_hold and scripts/discovery/hold.md.
+// `season_number` matters for TV (which season's match record gets the
+// resulting hold_id); omit it for a movie/whole-item match.
+export async function placeHold({ request_id, season_number, bib_id, branch_id }) {
+  const res = await fetch("/api/holds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ request_id, season_number, bib_id, branch_id }),
+  });
+  if (!res.ok) throw new Error(`placeHold failed: ${res.status}`);
+  return res.json();
+}
+
+// Combined "checked out or on hold" count for physical DVDs — see
+// app/repos/library_repo.py's get_dvd_activity_count and
+// scripts/discovery/account.md. Read-only; does not place/cancel anything.
+export async function fetchDvdActivityCount({ refresh = false } = {}) {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "1");
+  const res = await fetch(`/api/account/dvd-count?${params}`);
+  if (!res.ok) throw new Error(`fetchDvdActivityCount failed: ${res.status}`);
   return res.json();
 }
 

@@ -8,6 +8,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = REPO_ROOT / ".env"
 
 
+def data_dir():
+    """Where repos' SQLite files live — defaults to <repo root>/data, override
+    with $DATA_DIR to point a second instance (see APP_PORT) at scratch files
+    instead of the real data/*.db, e.g. for testing a match/save flow without
+    touching real request decisions."""
+    return Path(os.environ.get("DATA_DIR", REPO_ROOT / "data"))
+
+
 def load_env():
     if not ENV_PATH.exists():
         raise RuntimeError(f"Missing .env at {ENV_PATH} (copy .env.example)")

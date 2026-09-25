@@ -1,4 +1,5 @@
 import HoverZoomImage from "./HoverZoomImage";
+import { useQuickAdd } from "../QuickAddContext";
 
 // Renders the ranked candidates from /api/search (same ranking as
 // scripts/library/search.sh — see scripts/discovery/search.md), as "index
@@ -6,6 +7,11 @@ import HoverZoomImage from "./HoverZoomImage";
 // chip. Never auto-picks; every row gets an explicit "Choose" action, per
 // the decision that matching stays a human call until proven reliable.
 export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
+  // Opens the quick-add third column at the App.jsx level — a completely
+  // different title from the one being matched here (see QuickAddPanel),
+  // not part of the match/onChoose flow.
+  const openQuickAdd = useQuickAdd();
+
   if (results.length === 0) {
     return <p className="text-sm text-[var(--text-faint)] mt-3">No results.</p>;
   }
@@ -24,7 +30,7 @@ export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
         return (
           <div
             key={r.bib_id}
-            className={`flex items-center gap-3 py-2.5 px-2 -mx-2 rounded border-b border-dashed border-[var(--rule)] last:border-none ${
+            className={`group flex items-center gap-3 py-2.5 px-2 -mx-2 rounded border-b border-dashed border-[var(--rule)] last:border-none ${
               chosen ? "bg-[var(--available-bg)]" : ""
             }`}
           >
@@ -32,19 +38,43 @@ export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
               {r.match_score}
             </span>
 
-            {r.jacket_url ? (
-              <HoverZoomImage
-                src={r.jacket_url}
-                zoomSrc={r.jacket_url_large}
-                zoomWidth={320}
-                className="w-10 h-14 object-cover rounded-sm shrink-0 border border-[var(--rule)] bg-[var(--surface)] cursor-zoom-in"
-                onError={(e) => {
-                  e.currentTarget.style.visibility = "hidden";
-                }}
-              />
-            ) : (
-              <div className="w-10 h-14 shrink-0 rounded-sm border border-dashed border-[var(--rule)] bg-[var(--surface)]" />
-            )}
+            <div className="relative w-10 h-14 shrink-0">
+              {r.jacket_url ? (
+                <HoverZoomImage
+                  src={r.jacket_url}
+                  zoomSrc={r.jacket_url_large}
+                  zoomWidth={320}
+                  className="w-10 h-14 object-cover rounded-sm border border-[var(--rule)] bg-[var(--surface)] cursor-zoom-in"
+                  onError={(e) => {
+                    e.currentTarget.style.visibility = "hidden";
+                  }}
+                />
+              ) : (
+                <div className="w-10 h-14 rounded-sm border border-dashed border-[var(--rule)] bg-[var(--surface)]" />
+              )}
+              {r.existing_match ? (
+                // Already matched to some (possibly different) request —
+                // e.g. this bib is "Despicable Me 4" and it's already
+                // matched to that request, even though this result surfaced
+                // while searching "Despicable Me 2". Quick-add would create
+                // a duplicate Overseerr request, so it doesn't get offered
+                // here — this badge explains why instead of just vanishing.
+                <span
+                  title={`Already requested as "${r.existing_match.seerr_title}" — quick-add is disabled to avoid a duplicate request`}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full border border-[var(--available)]/40 bg-[var(--available-bg)] text-[var(--available)] text-xs leading-none flex items-center justify-center shadow opacity-0 scale-90 transition-all group-hover:opacity-100 group-hover:scale-100"
+                >
+                  ✓
+                </span>
+              ) : (
+                <button
+                  onClick={() => openQuickAdd(r)}
+                  title="Not what you were searching for? Add this to Overseerr and mark it found"
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full border border-[var(--rule-strong)] bg-[var(--surface-raised)] text-[var(--text-muted)] text-xs leading-none flex items-center justify-center shadow opacity-0 scale-90 transition-all group-hover:opacity-100 group-hover:scale-100 hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                >
+                  +
+                </button>
+              )}
+            </div>
 
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-sm truncate">

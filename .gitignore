@@ -7,6 +7,9 @@ data/seerr_cache.db
 data/library_cache.db
 data/matches.db
 data/tmdb_cache.db
+data/failed_quick_adds.db
+data/library_auth_cache
+data/backend.log
 __pycache__/
 *.pyc
 .pytest_cache/

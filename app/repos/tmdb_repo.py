@@ -23,9 +23,10 @@ from pathlib import Path
 
 import requests as http
 
+from app.lib.env import data_dir
 from app.lib.singleflight import SingleFlightCache
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "tmdb_cache.db"
+DB_PATH = data_dir() / "tmdb_cache.db"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60  # movie/tv metadata rarely changes day to day
 
 
@@ -158,6 +159,32 @@ class TmdbRepo:
             return record
 
         return self._singleflight.get_or_fetch(cache_key, get_cached, fetch_and_cache, force_refresh=force_refresh)
+
+    def search(self, query):
+        """TMDB's /search/multi, filtered to movie/tv (drops "person" results
+        multi-search also returns). Used by the quick-add flow (see
+        QuickAddService) to resolve a library title the user found into a
+        confirmed tmdb_id before creating an Overseerr request — a one-off
+        interactive lookup, not repeated per page load like get()/get_many(),
+        so it isn't cached."""
+        if not query:
+            return []
+        data = self._get("/search/multi", params={"query": query})
+        results = []
+        for r in data.get("results", []):
+            media_type = r.get("media_type")
+            if media_type not in ("movie", "tv"):
+                continue
+            results.append(
+                {
+                    "tmdb_id": r["id"],
+                    "media_type": media_type,
+                    "title": r.get("title") or r.get("name"),
+                    "release_date": r.get("release_date") or r.get("first_air_date"),
+                    "poster_path": r.get("poster_path"),
+                }
+            )
+        return results
 
     def get_many(self, items, ttl=DEFAULT_TTL_SECONDS, force_refresh=False):
         """items: iterable of (media_type, tmdb_id). Fetches concurrently

@@ -134,6 +134,31 @@ def test_get_many_isolates_a_single_item_failure(repo):
     assert results[("tv", 4056)]["title"] == "Brooklyn Nine-Nine"
 
 
+SEARCH_MULTI_RESPONSE = {
+    "results": [
+        {"id": 1, "media_type": "movie", "title": "Dune", "release_date": "1984-12-14", "poster_path": "/a.jpg"},
+        {"id": 2, "media_type": "tv", "name": "Dune: Prophecy", "first_air_date": "2024-11-17", "poster_path": "/b.jpg"},
+        {"id": 3, "media_type": "person", "name": "Denis Villeneuve"},
+    ]
+}
+
+
+def test_search_filters_to_movie_and_tv_and_normalizes_title_and_date(repo):
+    with patch("app.repos.tmdb_repo.http.get", return_value=FakeResponse(SEARCH_MULTI_RESPONSE)):
+        results = repo.search("dune")
+
+    assert results == [
+        {"tmdb_id": 1, "media_type": "movie", "title": "Dune", "release_date": "1984-12-14", "poster_path": "/a.jpg"},
+        {"tmdb_id": 2, "media_type": "tv", "title": "Dune: Prophecy", "release_date": "2024-11-17", "poster_path": "/b.jpg"},
+    ]
+
+
+def test_search_returns_empty_list_for_empty_query(repo):
+    with patch("app.repos.tmdb_repo.http.get") as mock_get:
+        assert repo.search("") == []
+    mock_get.assert_not_called()
+
+
 def test_api_key_sent_as_query_param(repo):
     captured_params = {}
 

@@ -8,6 +8,15 @@
 #   . scripts/library/auth.sh            # sources BC_ACCESS_TOKEN/BC_SESSION_ID into your shell
 #   scripts/library/auth.sh              # run standalone, prints KEY=VALUE lines to stdout
 #
+# Reuses a cached login from data/library_auth_cache (shared with
+# app/repos/library_repo.py's LibraryRepo — same TTL, same file) instead of
+# always hitting the network. Every call used to be a fresh login with zero
+# reuse, which is what actually tripped a real "user record is locked for
+# text update" account lock during heavy discovery/debugging in one session
+# (see scripts/discovery/auth.md) — this cache exists specifically to avoid
+# repeating that. The cache file holds a live session credential (like
+# .env), so it's gitignored — never commit it.
+#
 # How this works (see scripts/discovery/auth.md for how it was found):
 #   1. GET /user/login to pick up a session cookie + CSRF token (authenticity_token)
 #   2. POST credentials + CSRF token as form-urlencoded, with XHR-style headers
@@ -19,11 +28,33 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 . "$SCRIPT_DIR/../lib/env.sh"
 
 LIBRARY_BASE_URL="${LIBRARY_BASE_URL:-https://fulcolibrary.bibliocommons.com}"
 : "${LIBRARY_USERNAME:?LIBRARY_USERNAME not set in .env}"
 : "${LIBRARY_PASSWORD:?LIBRARY_PASSWORD not set in .env}"
+
+# Mirrors LibraryRepo.AUTH_TTL_SECONDS (app/repos/library_repo.py) — keep
+# these in sync; both read/write the same file so a script run and the app
+# share one login instead of each keeping their own.
+AUTH_CACHE_FILE="$REPO_ROOT/data/library_auth_cache"
+AUTH_TTL_SECONDS=600
+
+if [ -f "$AUTH_CACHE_FILE" ]; then
+  CACHED_ACCESS_TOKEN=""
+  CACHED_SESSION_ID=""
+  CACHED_AT=0
+  # shellcheck disable=SC1090
+  . "$AUTH_CACHE_FILE" 2>/dev/null || true
+  NOW="$(date +%s)"
+  AGE=$((NOW - CACHED_AT))
+  if [ -n "$CACHED_ACCESS_TOKEN" ] && [ -n "$CACHED_SESSION_ID" ] && [ "$AGE" -lt "$AUTH_TTL_SECONDS" ]; then
+    echo "BC_ACCESS_TOKEN=$CACHED_ACCESS_TOKEN"
+    echo "BC_SESSION_ID=$CACHED_SESSION_ID"
+    exit 0
+  fi
+fi
 
 COOKIE_JAR="$(mktemp)"
 trap 'rm -f "$COOKIE_JAR"' EXIT
@@ -65,6 +96,14 @@ if [ -z "$BC_ACCESS_TOKEN" ] || [ -z "$BC_SESSION_ID" ]; then
   echo "Login succeeded but bc_access_token/session_id cookies were not set." >&2
   exit 1
 fi
+
+mkdir -p "$REPO_ROOT/data"
+{
+  echo "CACHED_ACCESS_TOKEN=$BC_ACCESS_TOKEN"
+  echo "CACHED_SESSION_ID=$BC_SESSION_ID"
+  echo "CACHED_AT=$(date +%s)"
+} > "$AUTH_CACHE_FILE"
+chmod 600 "$AUTH_CACHE_FILE"
 
 echo "BC_ACCESS_TOKEN=$BC_ACCESS_TOKEN"
 echo "BC_SESSION_ID=$BC_SESSION_ID"

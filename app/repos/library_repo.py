@@ -15,11 +15,17 @@ from pathlib import Path
 
 import requests as http
 
+from app.lib.env import data_dir
 from app.lib.singleflight import SingleFlightCache
 from app.lib.feature_switch import delay_switch
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "library_cache.db"
+DB_PATH = data_dir() / "library_cache.db"
+# Shared with scripts/library/auth.sh — same file, same TTL, so a script run
+# and any app process reuse one login instead of each keeping their own.
+# Keep AUTH_TTL_SECONDS in sync with that script's AUTH_TTL_SECONDS.
+AUTH_CACHE_PATH = data_dir() / "library_auth_cache"
 DEFAULT_TTL_SECONDS = 6 * 60 * 60  # availability changes during the day, but not by the minute
+ACCOUNT_SUMMARY_TTL_SECONDS = 5 * 60  # checkouts/holds change with real-world activity — short TTL, same reasoning as SeerrRepo's request cache
 TEST_DELAY_ENV_VAR = "LIBRARY_TEST_FETCH_DELAY_SECONDS"
 # bc_access_token/session_id's real lifetime is undocumented (see
 # scripts/discovery/auth.md) — this is a conservative guess, not a confirmed
@@ -37,25 +43,37 @@ class LibraryRepo:
         password=None,
         agency=None,
         gateway_url=None,
+        default_hold_branch=None,
         db_path=DB_PATH,
+        auth_cache_path=AUTH_CACHE_PATH,
     ):
         self.base_url = (base_url or os.environ.get("LIBRARY_BASE_URL") or "https://fulcolibrary.bibliocommons.com").rstrip("/")
         self.username = username or os.environ["LIBRARY_USERNAME"]
         self.password = password or os.environ["LIBRARY_PASSWORD"]
         self.agency = agency or os.environ.get("LIBRARY_AGENCY", "fulcolibrary")
         self.gateway_url = (gateway_url or os.environ.get("LIBRARY_GATEWAY_URL") or "https://gateway.bibliocommons.com").rstrip("/")
+        # Pickup branch for place_hold — see scripts/discovery/hold.md, which
+        # confirmed "MILTON" live for this account specifically. Don't assume
+        # it's universal; override via LIBRARY_HOLD_BRANCH for a different
+        # account/home branch.
+        self.default_hold_branch = default_hold_branch or os.environ.get("LIBRARY_HOLD_BRANCH", "MILTON")
+        self._auth_cache_path = Path(auth_cache_path)
         self._conn = self._connect(db_path)
         self._singleflight = SingleFlightCache()
         # See SeerrRepo — sqlite3 Connections aren't safe for concurrent use
         # from multiple threads, and Flask runs threaded=True here.
         self._db_lock = threading.Lock()
-        # In-memory only, deliberately never written to the sqlite cache —
-        # it's a live session credential, not catalog data. Every distinct
-        # search used to call authenticate() fresh (no reuse at all), which
-        # meant repeatedly logging into a real account on every cache miss —
-        # a likely contributor to the "Invalid sequence number" flakiness
-        # documented in scripts/discovery/auth.md. One shared, locked login
-        # instead of one per search.
+        # In-memory cache (fastest path, no file I/O) plus a shared on-disk
+        # cache at AUTH_CACHE_PATH (see that constant) so a fresh process —
+        # a restarted app, a second isolated instance, a scripts/library/*.sh
+        # run — reuses a still-valid login instead of hitting the network
+        # again. This isn't just an optimization: repeatedly logging in with
+        # zero reuse (the original design here, and every scripts/library/
+        # auth.sh invocation before this) is what actually tripped a real
+        # "user record is locked for text update" account lock during one
+        # heavy discovery session (see scripts/discovery/auth.md). The file
+        # holds a live session credential, same sensitivity as .env — it's
+        # gitignored, never commit it.
         self._auth_cache = None  # (access_token, session_id, cached_at) | None
         self._auth_lock = threading.Lock()
 
@@ -91,6 +109,12 @@ class LibraryRepo:
                 rank_order INTEGER NOT NULL,
                 fetched_at REAL NOT NULL,
                 PRIMARY KEY (query, format_filter, bib_id)
+            );
+            CREATE TABLE IF NOT EXISTS account_summary (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                checked_out INTEGER NOT NULL,
+                on_hold INTEGER NOT NULL,
+                fetched_at REAL NOT NULL
             );
             """
         )
@@ -145,17 +169,62 @@ class LibraryRepo:
             raise RuntimeError("Login succeeded but bc_access_token/session_id cookies were not set.")
         return access_token, session_id
 
+    def _read_shared_auth_cache(self):
+        """Reads the on-disk cache shared with scripts/library/auth.sh.
+        Returns (access_token, session_id, cached_at) or None on any miss —
+        missing file, malformed content, or missing fields all just mean
+        "no usable cache", not an error worth raising."""
+        try:
+            values = {}
+            for line in self._auth_cache_path.read_text().splitlines():
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    values[key] = value
+            access_token = values["CACHED_ACCESS_TOKEN"]
+            session_id = values["CACHED_SESSION_ID"]
+            cached_at = float(values["CACHED_AT"])
+        except (FileNotFoundError, KeyError, ValueError):
+            return None
+        if not access_token or not session_id:
+            return None
+        return access_token, session_id, cached_at
+
+    def _write_shared_auth_cache(self, access_token, session_id, cached_at=None):
+        # Whole seconds, not a float — scripts/library/auth.sh does plain
+        # POSIX shell integer arithmetic ($((NOW - CACHED_AT))) on this value,
+        # which errors out on a fractional-seconds float like Python's raw
+        # time.time(). Sub-second precision isn't meaningful for a
+        # 600-second TTL anyway.
+        cached_at = int(cached_at if cached_at is not None else time.time())
+        self._auth_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._auth_cache_path.write_text(
+            f"CACHED_ACCESS_TOKEN={access_token}\nCACHED_SESSION_ID={session_id}\nCACHED_AT={cached_at}\n"
+        )
+        self._auth_cache_path.chmod(0o600)
+
     def _get_auth(self, force_refresh=False):
-        """Returns (access_token, session_id), reusing a cached login within
-        AUTH_TTL_SECONDS instead of calling authenticate() on every search."""
+        """Returns (access_token, session_id). Checks the in-memory cache
+        first, then the on-disk cache shared with scripts/library/auth.sh,
+        and only calls authenticate() (a real network login) if both are
+        missing or stale past AUTH_TTL_SECONDS."""
         with self._auth_lock:
             if not force_refresh and self._auth_cache is not None:
                 access_token, session_id, cached_at = self._auth_cache
                 if time.time() - cached_at < AUTH_TTL_SECONDS:
                     return access_token, session_id
 
+            if not force_refresh:
+                shared = self._read_shared_auth_cache()
+                if shared is not None:
+                    access_token, session_id, cached_at = shared
+                    if time.time() - cached_at < AUTH_TTL_SECONDS:
+                        self._auth_cache = (access_token, session_id, cached_at)
+                        return access_token, session_id
+
             access_token, session_id = self.authenticate()
-            self._auth_cache = (access_token, session_id, time.time())
+            now = time.time()
+            self._auth_cache = (access_token, session_id, now)
+            self._write_shared_auth_cache(access_token, session_id)
             return access_token, session_id
 
     # -- search ranking (see scripts/discovery/search.md) ------------------
@@ -176,8 +245,18 @@ class LibraryRepo:
             return 1
         return 0
 
+    @staticmethod
+    def _escape_query(text):
+        # The search backend is Solr-based and treats bare "?"/"*" as
+        # wildcard operators, not literal punctuation — e.g. a trailing "?"
+        # in "O Brother, Where Art Thou?" silently zeroes out the result
+        # count instead of matching the literal title. Escape them so title
+        # text is always searched literally.
+        return re.sub(r"([?*])", r"\\\1", text)
+
     def _search_request(self, query, format_filter, access_token, session_id):
-        search_query = f"formatcode:({format_filter}) {query}" if format_filter else query
+        escaped_query = self._escape_query(query)
+        search_query = f"formatcode:({format_filter}) {escaped_query}" if format_filter else escaped_query
         return http.get(
             f"{self.gateway_url}/v2/libraries/{self.agency}/bibs/search",
             headers={
@@ -241,6 +320,150 @@ class LibraryRepo:
             )
         records.sort(key=lambda r: (-r["match_score"], r["publication_date"] or ""))
         return records
+
+    # -- account summary (checkouts/holds — see scripts/discovery/account.md) --
+
+    @staticmethod
+    def _account_id(session_id):
+        # +1 from the session_id's numeric suffix — confirmed live against
+        # the real account (scripts/discovery/account.md); the bare suffix
+        # (no +1), which an earlier /header/state capture suggested, 500s.
+        return int(session_id.rsplit("-", 1)[-1]) + 1
+
+    @staticmethod
+    def _is_dvd(bib):
+        return bool(bib) and (bib.get("briefInfo") or {}).get("format") == "DVD"
+
+    def _account_request(self, kind, account_id, page, access_token, session_id):
+        return http.get(
+            f"{self.gateway_url}/v2/libraries/{self.agency}/{kind}",
+            headers={"Accept": "application/json", "X-Access-Token": access_token, "X-Session-Id": session_id},
+            params={"accountId": account_id, "materialType": "PHYSICAL", "locale": "en-US", "page": page},
+            timeout=15,
+        )
+
+    def _fetch_account_items(self, kind):
+        """kind: "checkouts" | "holds". Returns [(item, bib_or_None), ...]
+        across all pages — see scripts/discovery/account.md for why the join
+        against `bibs` is necessary (the API has no server-side DVD filter,
+        only PHYSICAL/DIGITAL)."""
+        access_token, session_id = self._get_auth()
+        account_id = self._account_id(session_id)
+
+        response = self._account_request(kind, account_id, 1, access_token, session_id)
+        if response.status_code in (401, 403):
+            access_token, session_id = self._get_auth(force_refresh=True)
+            account_id = self._account_id(session_id)
+            response = self._account_request(kind, account_id, 1, access_token, session_id)
+        response.raise_for_status()
+
+        items = []
+        page = 1
+        while True:
+            data = response.json()
+            entities = data.get("entities", {})
+            bibs = entities.get("bibs", {})
+            for item in entities.get(kind, {}).values():
+                items.append((item, bibs.get(item.get("metadataId"))))
+
+            pagination = data.get("borrowing", {}).get(kind, {}).get("pagination") or {}
+            if page >= pagination.get("pages", 1):
+                break
+            page += 1
+            response = self._account_request(kind, account_id, page, access_token, session_id)
+            response.raise_for_status()
+        return items
+
+    def _fetch_dvd_activity_count_live(self):
+        checked_out = sum(1 for _, bib in self._fetch_account_items("checkouts") if self._is_dvd(bib))
+        on_hold = sum(1 for _, bib in self._fetch_account_items("holds") if self._is_dvd(bib))
+        return {"checked_out": checked_out, "on_hold": on_hold, "total": checked_out + on_hold}
+
+    def _account_summary_cache_get(self, ttl):
+        cutoff = time.time() - ttl
+        with self._db_lock:
+            row = self._conn.execute(
+                "SELECT checked_out, on_hold FROM account_summary WHERE id = 1 AND fetched_at >= ?",
+                (cutoff,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"checked_out": row["checked_out"], "on_hold": row["on_hold"], "total": row["checked_out"] + row["on_hold"]}
+
+    def _account_summary_cache_set(self, summary):
+        with self._db_lock:
+            self._conn.execute(
+                """
+                INSERT INTO account_summary (id, checked_out, on_hold, fetched_at) VALUES (1, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    checked_out=excluded.checked_out, on_hold=excluded.on_hold, fetched_at=excluded.fetched_at
+                """,
+                (summary["checked_out"], summary["on_hold"], time.time()),
+            )
+            self._conn.commit()
+
+    def get_dvd_activity_count(self, ttl=ACCOUNT_SUMMARY_TTL_SECONDS, force_refresh=False):
+        """Returns ({"checked_out", "on_hold", "total"}, source) — physical
+        DVD items currently checked out or on hold, combined. Net new
+        endpoints (see scripts/discovery/account.md), separate from the
+        hold-placement API in hold.md."""
+
+        def get_cached():
+            return self._account_summary_cache_get(ttl)
+
+        def fetch_and_cache():
+            summary = self._fetch_dvd_activity_count_live()
+            self._account_summary_cache_set(summary)
+            return summary
+
+        return self._singleflight.get_or_fetch("dvd_activity_count", get_cached, fetch_and_cache, force_refresh=force_refresh)
+
+    def place_hold(self, bib_id, branch_id=None):
+        """Places a REAL hold on the live account. Confirmed live 2026-09-20
+        via a human-driven capture session (scripts/discovery/capture-hold.mjs
+        + hold.md) — the request body shape below is not a guess, it's what
+        actually worked. Cancel is still unconfirmed; this repo intentionally
+        has no cancel_hold method yet."""
+        branch_id = branch_id or self.default_hold_branch
+        access_token, session_id = self._get_auth()
+        account_id = self._account_id(session_id)
+
+        def request(access_token, session_id, account_id):
+            return http.post(
+                f"{self.gateway_url}/v2/libraries/{self.agency}/holds",
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "X-Access-Token": access_token,
+                    "X-Session-Id": session_id,
+                },
+                params={"locale": "en-US"},
+                json={
+                    "metadataId": bib_id,
+                    "materialType": "PHYSICAL",
+                    "accountId": account_id,
+                    "enableSingleClickHolds": False,
+                    "materialParams": {"branchId": branch_id, "expiryDate": None, "errorMessageLocale": "en-US"},
+                },
+                timeout=15,
+            )
+
+        response = request(access_token, session_id, account_id)
+        if response.status_code in (401, 403):
+            access_token, session_id = self._get_auth(force_refresh=True)
+            account_id = self._account_id(session_id)
+            response = request(access_token, session_id, account_id)
+        response.raise_for_status()
+
+        data = response.json()
+        holds = (data.get("entities") or {}).get("holds") or {}
+        hold = next(iter(holds.values()), {})
+        return {
+            "hold_id": hold.get("holdsId"),
+            "status": hold.get("status"),
+            "expiry_date": hold.get("expiryDate"),
+            "pickup_location": (hold.get("pickupLocation") or {}).get("name"),
+        }
 
     # -- cache --------------------------------------------------------------
 

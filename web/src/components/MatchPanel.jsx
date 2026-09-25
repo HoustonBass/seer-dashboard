@@ -1,92 +1,72 @@
-import { useEffect, useRef, useState } from "react";
-import { clearMatch, markUnavailable, saveMatch, searchLibrary } from "../lib/api";
+import { useState } from "react";
+import { WHOLE_ITEM_SEASON, clearMatch, markUnavailable, placeHold, saveMatch } from "../lib/api";
 import HoverZoomImage from "./HoverZoomImage";
-import SearchResultsTable from "./SearchResultsTable";
-
-const DEFAULT_FORMAT = "DVD";
+import MatchSearchBox from "./MatchSearchBox";
 
 // Detail/action panel for one selected Overseerr request, styled as a
-// library "catalog slip" — search the library catalog, inspect ranked
-// candidates, persist a chosen match. Owns its own search state so
-// RequestList stays a dumb list.
+// library "catalog slip". Movies get one MatchSearchBox for the whole item;
+// TV shows get a per-season accordion (see SeasonAccordion below) — the
+// library has one DVD per season, not per show, so "match" has to be
+// per-(request, season) for TV. See CLAUDE.md's TV-matching section.
 export default function MatchPanel({ request, onMatchChange }) {
-  const [query, setQuery] = useState(request.title);
-  const [format, setFormat] = useState(DEFAULT_FORMAT);
-  const [results, setResults] = useState([]);
-  const [source, setSource] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const searchGeneration = useRef(0);
+  const isTv = request.type === "tv" && request.seasons?.length > 0;
 
-  useEffect(() => {
-    setQuery(request.title);
-    setFormat(DEFAULT_FORMAT);
-    setResults([]);
-    setSource(null);
-    setError(null);
-    // Auto-search on selection — same call the Search button makes, so a
-    // prior cached search shows instantly and a never-searched title just
-    // runs live, same as clicking Search yourself would. runSearch reads
-    // `query`/`format` state, which the setters above haven't committed yet
-    // in this render, so pass the new values explicitly instead of relying
-    // on the (still-stale) closure.
-    runSearch(false, request.title, DEFAULT_FORMAT);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request.id]);
-
-  async function runSearch(refresh = false, overrideQuery, overrideFormat) {
-    // Guards against a race if the user clicks through requests faster than
-    // a search resolves — a slow, stale search landing after a newer
-    // selection shouldn't clobber that newer selection's results.
-    const generation = ++searchGeneration.current;
-    const q = overrideQuery ?? query;
-    const f = overrideFormat ?? format;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await searchLibrary(q, f, { refresh });
-      if (searchGeneration.current !== generation) return;
-      setResults(data.results);
-      setSource(data.source);
-    } catch (e) {
-      if (searchGeneration.current !== generation) return;
-      setError(e.message);
-    } finally {
-      if (searchGeneration.current === generation) setLoading(false);
-    }
-  }
-
-  async function handleChoose(candidate) {
+  async function handleChoose(seasonNumber, candidate) {
     await saveMatch({
       request_id: request.id,
+      season_number: seasonNumber,
       tmdb_id: request.tmdb_id,
       media_type: request.type,
       seerr_title: request.title,
       bib_id: candidate.bib_id,
       bib_title: candidate.title,
       bib_subtitle: candidate.subtitle,
+      availability_status: candidate.availability_status,
     });
-    onMatchChange(request.id, {
+    onMatchChange(request.id, seasonNumber, {
       status: "matched",
       bib_id: candidate.bib_id,
       bib_title: candidate.title,
       bib_subtitle: candidate.subtitle,
+      availability_status: candidate.availability_status,
+      hold_id: null,
     });
   }
 
-  async function handleMarkUnavailable() {
+  // Places a REAL hold on the live account — see app/repos/library_repo.py's
+  // place_hold / scripts/discovery/hold.md. Only offered by MatchSearchBox
+  // when the matched item's last-known availability wasn't AVAILABLE and no
+  // hold has been placed yet for this match.
+  async function handlePlaceHold(seasonNumber, match) {
+    const result = await placeHold({ request_id: request.id, season_number: seasonNumber, bib_id: match.bib_id });
+    onMatchChange(request.id, seasonNumber, { ...match, hold_id: result.hold_id });
+    return result;
+  }
+
+  async function handleMarkUnavailable(seasonNumber) {
     await markUnavailable({
       request_id: request.id,
+      season_number: seasonNumber,
       tmdb_id: request.tmdb_id,
       media_type: request.type,
       seerr_title: request.title,
     });
-    onMatchChange(request.id, { status: "unavailable", bib_id: null, bib_title: null, bib_subtitle: null });
+    onMatchChange(request.id, seasonNumber, { status: "unavailable", bib_id: null, bib_title: null, bib_subtitle: null });
   }
 
-  async function handleClear() {
-    await clearMatch(request.id);
-    onMatchChange(request.id, null);
+  // Bulk "give up on whatever's left" action for TV (see SeasonAccordion's
+  // header button) — marks every still-undecided requested season
+  // unavailable in one click instead of opening each one individually.
+  // Reuses handleMarkUnavailable per season (same persistence + local-state
+  // update path as the single-season button), fired concurrently since each
+  // season is an independent (request_id, season_number) row.
+  async function handleMarkAllUnavailable(seasonNumbers) {
+    await Promise.all(seasonNumbers.map((seasonNumber) => handleMarkUnavailable(seasonNumber)));
+  }
+
+  async function handleClear(seasonNumber) {
+    await clearMatch(request.id, seasonNumber === WHOLE_ITEM_SEASON ? undefined : seasonNumber);
+    onMatchChange(request.id, seasonNumber, null);
   }
 
   return (
@@ -96,6 +76,7 @@ export default function MatchPanel({ request, onMatchChange }) {
       </h2>
       <p className="mono text-xs text-[var(--text-muted)] mt-0.5">
         request #{request.id} · tmdbId {request.tmdb_id} · {request.type}
+        {isTv && ` · ${request.seasons.length} season${request.seasons.length === 1 ? "" : "s"} requested`}
       </p>
 
       {request.tmdb && (
@@ -105,7 +86,7 @@ export default function MatchPanel({ request, onMatchChange }) {
               src={`https://image.tmdb.org/t/p/w92${request.tmdb.poster_path}`}
               zoomSrc={`https://image.tmdb.org/t/p/w500${request.tmdb.poster_path}`}
               zoomWidth={320}
-              className="w-14 rounded border border-[var(--rule)] shrink-0 cursor-zoom-in"
+              className="w-14 aspect-[2/3] rounded border border-[var(--rule)] shrink-0 cursor-zoom-in"
             />
           )}
           <div className="min-w-0">
@@ -124,85 +105,153 @@ export default function MatchPanel({ request, onMatchChange }) {
         </div>
       )}
 
-      {request.match?.status === "matched" && (
-        <div className="flex items-center gap-2 text-sm mt-4 bg-[var(--available-bg)] border border-[var(--available)]/30 rounded px-3 py-2">
-          <span className="text-[var(--text)]">
-            Matched to <strong>{request.match.bib_title}</strong>
-            {request.match.bib_subtitle ? `: ${request.match.bib_subtitle}` : ""}{" "}
-            <span className="mono text-[var(--text-faint)]">({request.match.bib_id})</span>
-          </span>
-          <button onClick={handleClear} className="ml-auto text-xs font-semibold text-[var(--accent)] hover:underline">
-            Clear
-          </button>
-        </div>
-      )}
-
-      {request.match?.status === "unavailable" && (
-        <div className="flex items-center gap-2 text-sm mt-4 bg-[var(--unmatched-bg)] border border-[var(--text-faint)]/30 rounded px-3 py-2">
-          <span className="text-[var(--text)]">Confirmed not in the library catalog.</span>
-          <button onClick={handleClear} className="ml-auto text-xs font-semibold text-[var(--accent)] hover:underline">
-            Clear
-          </button>
-        </div>
-      )}
-
-      <div className="flex gap-2 items-center mt-4">
-        <input
-          className="flex-1 text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface)] px-2.5 py-1.5"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && runSearch()}
-        />
-        <select
-          className="text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface)] px-2 py-1.5"
-          value={format}
-          onChange={(e) => setFormat(e.target.value)}
-        >
-          <option value="">any format</option>
-          <option value="DVD">DVD</option>
-          <option value="BLU-RAY">Blu-ray</option>
-          <option value="BK">Book</option>
-          <option value="AB">Audiobook</option>
-        </select>
-        <button
-          onClick={() => runSearch(false)}
-          disabled={loading}
-          className="text-sm font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50"
-        >
-          Search
-        </button>
-        <button
-          onClick={() => runSearch(true)}
-          disabled={loading}
-          className="text-sm font-semibold px-3 py-1.5 rounded border border-[var(--rule-strong)] text-[var(--text-muted)] hover:bg-[var(--surface)] disabled:opacity-50"
-          title="Bypass cache and re-fetch live"
-        >
-          Refresh
-        </button>
+      <div className="mt-4">
+        {isTv ? (
+          <SeasonAccordion
+            request={request}
+            onChoose={handleChoose}
+            onMarkUnavailable={handleMarkUnavailable}
+            onMarkAllUnavailable={handleMarkAllUnavailable}
+            onClear={handleClear}
+            onPlaceHold={handlePlaceHold}
+          />
+        ) : (
+          <MatchSearchBox
+            key={request.id}
+            defaultQuery={request.title}
+            match={request.match}
+            autoSearchKey={request.id}
+            onChoose={(candidate) => handleChoose(WHOLE_ITEM_SEASON, candidate)}
+            onMarkUnavailable={() => handleMarkUnavailable(WHOLE_ITEM_SEASON)}
+            onClear={() => handleClear(WHOLE_ITEM_SEASON)}
+            onPlaceHold={(match) => handlePlaceHold(WHOLE_ITEM_SEASON, match)}
+          />
+        )}
       </div>
+    </div>
+  );
+}
 
-      <div className="flex items-center gap-3 mt-2">
-        {source && <p className="mono text-xs text-[var(--text-faint)]">source: {source}</p>}
-        {error && <p className="text-sm text-[var(--accent)]">{error}</p>}
-      </div>
+function seasonStatusPill(match) {
+  if (match?.status === "matched") {
+    return (
+      <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap">
+        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+        {match.bib_title}
+        {match.bib_subtitle ? `: ${match.bib_subtitle}` : ""}
+      </span>
+    );
+  }
+  if (match?.status === "unavailable") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
+        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+        not in library
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+      unmatched
+    </span>
+  );
+}
 
-      {source && !loading && request.match?.status !== "unavailable" && (
-        <div className="flex items-center gap-3 text-sm mt-3 bg-[var(--unmatched-bg)] border border-[var(--text-faint)]/30 rounded px-3 py-2.5">
-          <span className="text-[var(--text)]">
-            {results.length === 0
-              ? "No results in the library catalog for this search."
-              : "Not the right title? Confirm the library doesn't have this one."}
-          </span>
+// One accordion row per *requested* season (Overseerr's own seasons array —
+// not every season the show has, see CLAUDE.md). Only the expanded season's
+// MatchSearchBox is mounted, so selecting a show doesn't fire off N
+// concurrent library searches for every season at once — just the one
+// you're actually looking at.
+function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavailable, onClear, onPlaceHold }) {
+  const [expanded, setExpanded] = useState(null);
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markAllError, setMarkAllError] = useState(null);
+  const seasons = [...request.seasons].sort((a, b) => a - b);
+  const matchedCount = seasons.filter((s) => request.season_matches?.[s]?.status === "matched").length;
+  // "Unset" = no decision at all yet — neither matched nor already confirmed
+  // unavailable (re-marking those would be a no-op but there's no reason to
+  // re-send them).
+  const unsetSeasons = seasons.filter((s) => !request.season_matches?.[s]);
+
+  async function handleMarkAllUnavailable() {
+    setMarkingAll(true);
+    setMarkAllError(null);
+    try {
+      await onMarkAllUnavailable(unsetSeasons);
+    } catch (e) {
+      setMarkAllError(e.message);
+    } finally {
+      setMarkingAll(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-3 px-3 py-2.5 bg-[var(--surface)] border border-[var(--rule)] rounded text-sm">
+        <span className="whitespace-nowrap">
+          {matchedCount} of {seasons.length} requested season{seasons.length === 1 ? "" : "s"} matched
+        </span>
+        <div className="flex-1 h-1.5 rounded-full bg-[var(--rule-strong)] overflow-hidden">
+          <div
+            className="h-full bg-[var(--available)] rounded-full"
+            style={{ width: `${seasons.length ? (matchedCount / seasons.length) * 100 : 0}%` }}
+          />
+        </div>
+        {unsetSeasons.length > 0 && (
           <button
-            onClick={handleMarkUnavailable}
-            className="ml-auto shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)]"
+            onClick={handleMarkAllUnavailable}
+            disabled={markingAll}
+            title={`Mark all ${unsetSeasons.length} undecided season${unsetSeasons.length === 1 ? "" : "s"} not in library`}
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50 whitespace-nowrap"
           >
-            Mark not in library
+            {markingAll ? "Marking…" : `Mark remaining ${unsetSeasons.length} not in library`}
           </button>
-        </div>
-      )}
+        )}
+      </div>
+      {markAllError && <p className="text-xs text-[var(--accent)] mb-3">Failed to mark all — {markAllError}.</p>}
 
-      <SearchResultsTable results={results} onChoose={handleChoose} chosenBibId={request.match?.bib_id} />
+      {seasons.map((seasonNumber) => {
+        const match = request.season_matches?.[seasonNumber] ?? null;
+        const isOpen = expanded === seasonNumber;
+        return (
+          // Plain button + conditional div, not <details>/<summary> — a
+          // native <details>'s open state is uncontrolled DOM state that
+          // only that one element's browser-driven toggle updates, so
+          // "close the others when one opens" required React to fight the
+          // DOM after the fact and was unreliable. Driving isOpen from a
+          // single `expanded` state value and nothing else makes exactly
+          // one section open, deterministically, every time.
+          <div key={seasonNumber} className="border-b border-[var(--rule)] last:border-none">
+            <button
+              type="button"
+              onClick={() => setExpanded(isOpen ? null : seasonNumber)}
+              className="w-full flex items-center gap-3 py-2.5 cursor-pointer hover:bg-[var(--surface)] text-left"
+            >
+              <span className="mono text-xs text-[var(--text-muted)] w-8">S{seasonNumber}</span>
+              <span className="text-sm flex-1">Season {seasonNumber}</span>
+              {seasonStatusPill(match)}
+              <span className={`mono text-xs text-[var(--text-faint)] transition-transform ${isOpen ? "rotate-90 text-[var(--accent)]" : ""}`}>
+                ▸
+              </span>
+            </button>
+            {isOpen && (
+              <div className="pb-4 pl-11">
+                <MatchSearchBox
+                  key={`${request.id}-${seasonNumber}`}
+                  defaultQuery={`${request.title} season ${seasonNumber}`}
+                  match={match}
+                  autoSearchKey={`${request.id}-${seasonNumber}`}
+                  onChoose={(candidate) => onChoose(seasonNumber, candidate)}
+                  onMarkUnavailable={() => onMarkUnavailable(seasonNumber)}
+                  onClear={() => onClear(seasonNumber)}
+                  onPlaceHold={(m) => onPlaceHold(seasonNumber, m)}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

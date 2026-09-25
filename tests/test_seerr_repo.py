@@ -27,6 +27,7 @@ REQUEST_PAGE = {
             "type": "tv",
             "media": {"tmdbId": 200, "status": 2},
             "requestedBy": {"displayName": "Bob"},
+            "seasons": [{"seasonNumber": 1, "status": 2}, {"seasonNumber": 2, "status": 2}],
         },
     ],
 }
@@ -66,11 +67,11 @@ def test_list_requests_resolves_titles_and_shapes_rows(repo):
     assert rows == [
         {
             "id": 1, "type": "movie", "tmdb_id": 100, "title": "Movie A",
-            "request_status": 2, "media_status": 3, "requested_by": "Alice",
+            "request_status": 2, "media_status": 3, "requested_by": "Alice", "seasons": [],
         },
         {
             "id": 2, "type": "tv", "tmdb_id": 200, "title": "Show B",
-            "request_status": 1, "media_status": 2, "requested_by": "Bob",
+            "request_status": 1, "media_status": 2, "requested_by": "Bob", "seasons": [1, 2],
         },
     ]
 
@@ -115,6 +116,48 @@ def test_different_filters_cache_independently(repo):
 
     assert source_a == "live"
     assert source_b == "live"  # different cache key, not a hit off "all"'s entry
+
+
+def test_create_request_for_movie_omits_seasons(repo):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResponse({"id": 42, "media": {"status": 2}})
+
+    with patch("app.repos.seerr_repo.http.post", side_effect=fake_post):
+        result = repo.create_request("movie", 438631)
+
+    assert captured["url"].endswith("/api/v1/request")
+    assert captured["json"] == {"mediaType": "movie", "mediaId": 438631}
+    assert result == {"id": 42, "media_status": 2}
+
+
+def test_create_request_for_tv_defaults_seasons_to_all(repo):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse({"id": 43, "media": {"status": 2}})
+
+    with patch("app.repos.seerr_repo.http.post", side_effect=fake_post):
+        repo.create_request("tv", 4056)
+
+    assert captured["json"] == {"mediaType": "tv", "mediaId": 4056, "seasons": "all"}
+
+
+def test_create_request_for_tv_passes_explicit_seasons_through(repo):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse({"id": 44, "media": {"status": 2}})
+
+    with patch("app.repos.seerr_repo.http.post", side_effect=fake_post):
+        repo.create_request("tv", 4056, seasons=[1, 2])
+
+    assert captured["json"] == {"mediaType": "tv", "mediaId": 4056, "seasons": [1, 2]}
 
 
 def test_concurrent_calls_for_same_filter_are_thread_safe_and_single_flight(repo, monkeypatch):

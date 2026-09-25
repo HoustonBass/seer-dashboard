@@ -4,6 +4,8 @@ TmdbRepo; no HTTP or SQL of its own.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from app.repos.match_repo import WHOLE_ITEM_SEASON
+
 STREAM_WORKERS = 10
 
 
@@ -22,8 +24,7 @@ class RequestsService:
         tmdb_data = self.tmdb_repo.get_many((row["type"], row["tmdb_id"]) for row in rows)
         enriched = [
             {
-                **row,
-                "match": matches.get(row["id"]),
+                **self._join_match(row, matches),
                 "tmdb": tmdb_data.get((row["type"], row["tmdb_id"])),
             }
             for row in rows
@@ -47,7 +48,10 @@ class RequestsService:
 
         On a cache hit, rows already carry the `tmdb` data they were cached
         with (up to SeerrRepo's 5-minute TTL stale) — replayed directly, no
-        re-fetch. Only a cache miss does the live per-row pipeline.
+        re-fetch. Only a cache miss does the live per-row pipeline. `match`/
+        `season_matches` are joined fresh every time regardless of cache
+        state, since those live in MatchRepo (a different cache entirely)
+        and change independently of Overseerr/TMDB data.
         """
         matches = self.match_repo.get_all_matches()
 
@@ -55,7 +59,7 @@ class RequestsService:
             cached_rows = self.seerr_repo.get_cached_requests(filter_key)
             if cached_rows is not None:
                 for row in cached_rows:
-                    yield {**row, "match": matches.get(row["id"])}, "cache"
+                    yield self._join_match(row, matches), "cache"
                 return
 
         raw_items = self.seerr_repo.fetch_raw_requests(filter_key)
@@ -65,9 +69,26 @@ class RequestsService:
             for future in as_completed(futures):
                 row = future.result()
                 assembled.append(row)
-                yield {**row, "match": matches.get(row["id"])}, "live"
+                yield self._join_match(row, matches), "live"
 
         self.seerr_repo.cache_requests(filter_key, assembled)
+
+    def _join_match(self, row, matches):
+        """Merges MatchRepo's per-(request, season) decisions onto a row.
+
+        `match` — the whole-item decision (season 0), which is the only kind
+        movies ever have. Always None for TV.
+        `season_matches` — {season_number: match_dict}, keyed by Overseerr's
+        real season numbers. Only meaningful for TV (empty dict for movies).
+        The frontend picks whichever of the two matters based on `row["type"]`
+        rather than this method deciding — see RequestList.jsx/MatchPanel.jsx.
+        """
+        request_matches = matches.get(row["id"], {})
+        return {
+            **row,
+            "match": request_matches.get(WHOLE_ITEM_SEASON),
+            "season_matches": request_matches,
+        }
 
     def _resolve_and_enrich(self, raw):
         media_type = raw["type"]
@@ -86,4 +107,5 @@ class RequestsService:
             "media_status": raw["media"]["status"],
             "requested_by": raw["requestedBy"]["displayName"],
             "tmdb": tmdb_record,
+            "seasons": [s["seasonNumber"] for s in raw.get("seasons", [])],
         }

@@ -20,10 +20,11 @@ from pathlib import Path
 
 import requests as http
 
+from app.lib.env import data_dir
 from app.lib.singleflight import SingleFlightCache
 from app.lib.feature_switch import delay_switch
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "seerr_cache.db"
+DB_PATH = data_dir() / "seerr_cache.db"
 DEFAULT_TTL_SECONDS = 5 * 60  # request/media status changes fairly often — short TTL
 TITLE_LOOKUP_WORKERS = 10  # neither Overseerr nor TMDB offer a bulk title-lookup
 # endpoint — this is one HTTP call per request just to resolve a title, so on
@@ -72,6 +73,24 @@ class SeerrRepo:
         response.raise_for_status()
         return response.json()
 
+    def create_request(self, media_type, tmdb_id, seasons=None):
+        """POST /api/v1/request — creates a real request on the live
+        Overseerr account (see the quick-add flow, QuickAddService). Public,
+        documented endpoint (see scripts/discovery/seerr.md), unlike the
+        library's hold endpoint. `seasons` is tv-only; Overseerr accepts an
+        explicit list of season numbers or the literal "all" — quick-add
+        always requests the whole series (`seasons or "all"`) since the
+        flow's job is "get this into Overseerr", not per-season selection.
+        Doesn't touch the requests cache — its 5-minute TTL means the new
+        request shows up on the next natural refresh."""
+        body = {"mediaType": media_type, "mediaId": tmdb_id}
+        if media_type == "tv":
+            body["seasons"] = seasons or "all"
+        response = http.post(f"{self.base_url}/api/v1/request", headers=self._headers(), json=body, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        return {"id": data["id"], "media_status": (data.get("media") or {}).get("status")}
+
     def fetch_title(self, media_type, tmdb_id):
         if media_type == "movie":
             return self._get(f"/api/v1/movie/{tmdb_id}").get("title", "?")
@@ -113,6 +132,12 @@ class SeerrRepo:
                 "request_status": r["status"],
                 "media_status": r["media"]["status"],
                 "requested_by": r["requestedBy"]["displayName"],
+                # Overseerr's own record of which seasons were actually
+                # requested (not all seasons the show has — a request can be
+                # for a subset). Always [] for movies. See scripts/discovery/
+                # seerr.md and CLAUDE.md's TV-matching section for why this
+                # matters: the library has one DVD per season, not per show.
+                "seasons": [s["seasonNumber"] for s in r.get("seasons", [])],
             }
 
         with ThreadPoolExecutor(max_workers=TITLE_LOOKUP_WORKERS) as pool:
