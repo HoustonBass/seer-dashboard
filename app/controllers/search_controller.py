@@ -23,4 +23,10 @@ def create_search_blueprint(search_service):
         edition, source = search_service.get_bib_edition(bib_id, force_refresh=force_refresh)
         return jsonify({"source": source, "edition": edition})
 
+    @bp.route("/api/search/<bib_id>/branches")
+    def branches(bib_id):
+        force_refresh = request.args.get("refresh") == "1"
+        branches, source = search_service.get_bib_branches(bib_id, force_refresh=force_refresh)
+        return jsonify({"source": source, "branches": branches})
+
     return bp

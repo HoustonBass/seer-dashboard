@@ -33,6 +33,13 @@ class SearchService:
         LibraryRepo._attach_cached_editions."""
         return self.library_repo.get_bib_edition(bib_id, force_refresh=force_refresh)
 
+    def get_bib_branches(self, bib_id, force_refresh=False):
+        """Which physical branches hold a copy of this bib and each copy's
+        status — see LibraryRepo.get_bib_branches / scripts/discovery/
+        branch-availability.md. On-demand per bib_id, same reasoning as
+        get_bib_edition above."""
+        return self.library_repo.get_bib_branches(bib_id, force_refresh=force_refresh)
+
     @staticmethod
     def _existing_match_summary(match):
         if match is None:

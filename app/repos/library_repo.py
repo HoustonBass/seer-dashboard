@@ -6,6 +6,7 @@ those scripts stay as-is as standalone CLI reference implementations. See
 scripts/discovery/auth.md and search.md for how this flow was
 reverse-engineered; don't re-derive it, this is a straight port.
 """
+import json
 import os
 import re
 import sqlite3
@@ -129,6 +130,11 @@ class LibraryRepo:
                 format_filter TEXT NOT NULL DEFAULT '',
                 fetched_at REAL NOT NULL,
                 PRIMARY KEY (query, format_filter)
+            );
+            CREATE TABLE IF NOT EXISTS bib_branches (
+                bib_id TEXT PRIMARY KEY,
+                branches_json TEXT NOT NULL,
+                fetched_at REAL NOT NULL
             );
             """
         )
@@ -376,6 +382,79 @@ class LibraryRepo:
             "description": brief.get("description"),
             "publication_note": self._extract_field(record.get("fields"), "PUBLICATION"),
         }
+
+    def _fetch_branches_live(self, bib_id):
+        """Per-branch physical copy breakdown — search/catalogBibs only ever
+        expose the aggregate available/total counts, not which branches
+        actually hold a copy. See scripts/discovery/branch-availability.md."""
+        access_token, session_id = self._get_auth()
+        response = self._branch_availability_request(bib_id, access_token, session_id)
+
+        if response.status_code in (401, 403):
+            access_token, session_id = self._get_auth(force_refresh=True)
+            response = self._branch_availability_request(bib_id, access_token, session_id)
+
+        response.raise_for_status()
+        data = response.json()
+        bib_items = data.get("entities", {}).get("bibItems") or {}
+        return [
+            {
+                "branch_name": item["branch"]["name"],
+                "branch_code": item["branch"]["code"],
+                "status": (item.get("availability") or {}).get("status", ""),
+                "call_number": item.get("callNumber", ""),
+            }
+            for item in bib_items.values()
+        ]
+
+    def _branch_availability_request(self, bib_id, access_token, session_id):
+        return http.get(
+            f"{self.gateway_url}/v2/libraries/{self.agency}/bibs/{bib_id}/availability",
+            headers={
+                "Accept": "application/json",
+                "X-Access-Token": access_token,
+                "X-Session-Id": session_id,
+            },
+            params={"locale": "en-US"},
+            timeout=15,
+        )
+
+    def _branches_cache_get(self, bib_id, ttl):
+        cutoff = time.time() - ttl
+        with self._db_lock:
+            row = self._conn.execute(
+                "SELECT branches_json FROM bib_branches WHERE bib_id = ? AND fetched_at >= ?",
+                (bib_id, cutoff),
+            ).fetchone()
+        return json.loads(row["branches_json"]) if row else None
+
+    def _branches_cache_set(self, bib_id, branches):
+        with self._db_lock:
+            self._conn.execute(
+                """
+                INSERT INTO bib_branches (bib_id, branches_json, fetched_at) VALUES (?, ?, ?)
+                ON CONFLICT(bib_id) DO UPDATE SET branches_json=excluded.branches_json, fetched_at=excluded.fetched_at
+                """,
+                (bib_id, json.dumps(branches), time.time()),
+            )
+            self._conn.commit()
+
+    def get_bib_branches(self, bib_id, ttl=DEFAULT_TTL_SECONDS, force_refresh=False):
+        """Returns (branches, source) where branches is a list of
+        {branch_name, branch_code, status, call_number} — one per physical
+        copy. Same TTL reasoning as search's DEFAULT_TTL_SECONDS: which
+        branches hold a copy doesn't change, but each copy's checked-out
+        status does, during the day."""
+
+        def get_cached():
+            return self._branches_cache_get(bib_id, ttl)
+
+        def fetch_and_cache():
+            branches = self._fetch_branches_live(bib_id)
+            self._branches_cache_set(bib_id, branches)
+            return branches
+
+        return self._singleflight.get_or_fetch(f"branches:{bib_id}", get_cached, fetch_and_cache, force_refresh=force_refresh)
 
     def _catalog_bib_request(self, bib_id, access_token, session_id):
         return http.get(

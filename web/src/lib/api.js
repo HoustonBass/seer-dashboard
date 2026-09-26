@@ -60,6 +60,15 @@ export async function fetchBibEdition(bibId) {
   return res.json();
 }
 
+// Which physical branches hold a copy of this bib, and each copy's status —
+// see LibraryRepo.get_bib_branches / scripts/discovery/branch-availability.md.
+// Same on-demand-per-bib_id shape as fetchBibEdition above.
+export async function fetchBibBranches(bibId) {
+  const res = await fetch(`/api/search/${bibId}/branches`);
+  if (!res.ok) throw new Error(`fetchBibBranches failed: ${res.status}`);
+  return res.json();
+}
+
 // `match`/the body for markUnavailable below may include `season_number` —
 // omit it for a whole-item (movie) decision, include it for a specific TV
 // season. See app/repos/match_repo.py's WHOLE_ITEM_SEASON for the default.

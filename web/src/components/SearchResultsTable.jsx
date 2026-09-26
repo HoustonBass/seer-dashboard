@@ -1,7 +1,7 @@
 import { useState } from "react";
 import HoverZoomImage from "./HoverZoomImage";
 import { useQuickAdd } from "../QuickAddContext";
-import { fetchBibEdition } from "../lib/api";
+import { fetchBibBranches, fetchBibEdition } from "../lib/api";
 
 // Renders the ranked candidates from /api/search (same ranking as
 // scripts/library/search.sh — see scripts/discovery/search.md), as "index
@@ -60,6 +60,28 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
       setEditionError(e.message);
     } finally {
       setEditionLoading(false);
+    }
+  }
+
+  // Which physical branches hold a copy, and each copy's status — search
+  // only ever gives the aggregate available/total count, not which branches
+  // (see LibraryRepo.get_bib_branches / scripts/discovery/branch-availability.md).
+  // Same on-demand-per-click shape as edition above, no pre-fill from the
+  // search response since branch data isn't cached inline there.
+  const [branches, setBranches] = useState(null);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchesError, setBranchesError] = useState(null);
+
+  async function handleShowBranches() {
+    setBranchesLoading(true);
+    setBranchesError(null);
+    try {
+      const data = await fetchBibBranches(r.bib_id);
+      setBranches(data.branches);
+    } catch (e) {
+      setBranchesError(e.message);
+    } finally {
+      setBranchesLoading(false);
     }
   }
 
@@ -161,6 +183,16 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
                 {editionLoading ? "Checking edition…" : "What edition is this?"}
               </button>
             )}
+            {!branches && (
+              <button
+                onClick={handleShowBranches}
+                disabled={branchesLoading}
+                className="font-semibold text-[var(--text-muted)] hover:text-[var(--text)] hover:underline disabled:opacity-50"
+                title="Which branches actually have a copy of this?"
+              >
+                {branchesLoading ? "Checking branches…" : "Which branches?"}
+              </button>
+            )}
           </div>
           {editionError && (
             <p className="text-xs text-[var(--accent)] mt-1">Couldn't load edition info — {editionError}.</p>
@@ -172,6 +204,30 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
               {edition.publication_note}
               {!edition.edition && !edition.publication_note && "No edition detail on file for this copy."}
             </p>
+          )}
+          {branchesError && (
+            <p className="text-xs text-[var(--accent)] mt-1">Couldn't load branch info — {branchesError}.</p>
+          )}
+          {branches && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {branches.length === 0 ? (
+                <span className="text-xs text-[var(--text-muted)]">No branch detail on file for this copy.</span>
+              ) : (
+                branches.map((b, i) => (
+                  <span
+                    key={`${b.branch_code}-${i}`}
+                    title={b.call_number}
+                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      b.status === "AVAILABLE"
+                        ? "text-[var(--available)] bg-[var(--available-bg)]"
+                        : "text-[var(--unmatched)] bg-[var(--unmatched-bg)]"
+                    }`}
+                  >
+                    {b.branch_name}
+                  </span>
+                ))
+              )}
+            </div>
           )}
         </div>
 
