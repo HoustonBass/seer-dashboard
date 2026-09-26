@@ -12,11 +12,11 @@ import { FILTER_OPTIONS, getDefaultFilter } from "./lib/defaultFilter";
 import { seasonNumberWord } from "./lib/labels";
 import { useThemeMode } from "./theme/ThemeModeContext";
 
-// "unmatched"/"matched" aren't Overseerr request statuses — Overseerr has no
-// concept of our library match. They're client-side filters over whatever
-// got loaded, not a value passed to /api/requests?filter=; anything not in
-// this set falls back to "all" for the actual backend query.
-const OVERSEERR_FILTERS = new Set(["all", "approved", "available", "processing"]);
+// "unmatched"/"matched"/"matched_waiting" aren't Overseerr request statuses —
+// Overseerr has no concept of our library match. They're client-side filters
+// over whatever got loaded, not a value passed to /api/requests?filter=;
+// anything not in this set falls back to "all" for the actual backend query.
+const OVERSEERR_FILTERS = new Set(["all", "available", "processing"]);
 
 // Already-available requests don't need a library match — there's nothing
 // left to hunt down, Overseerr already has it covered. For TV, "unmatched"
@@ -30,6 +30,16 @@ function isUnmatchedRequest(r) {
     return r.seasons.some((s) => !r.season_matches?.[s]);
   }
   return !r.match;
+}
+
+// Every requested season/the whole item has a library match — shared by the
+// "matched" filter and "matched, waiting" below so they can't drift apart on
+// what "matched" means.
+function isFullyMatchedRequest(r) {
+  if (r.type === "tv" && r.seasons?.length > 0) {
+    return r.seasons.length > 0 && r.seasons.every((s) => r.season_matches?.[s]?.status === "matched");
+  }
+  return r.match?.status === "matched";
 }
 
 // Mock FE — for testing matching strategies against the real Overseerr +
@@ -150,18 +160,16 @@ export default function App() {
       : filter === "unmatched"
         ? requests.filter(isUnmatchedRequest)
         : filter === "matched"
-          ? requests.filter((r) =>
-              r.type === "tv" && r.seasons?.length > 0
-                ? r.seasons.length > 0 && r.seasons.every((s) => r.season_matches?.[s]?.status === "matched")
-                : r.match?.status === "matched",
-            )
-          : filter === "unavailable"
-            ? requests.filter((r) =>
-                r.type === "tv" && r.seasons?.length > 0
-                  ? r.seasons.some((s) => r.season_matches?.[s]?.status === "unavailable")
-                  : r.match?.status === "unavailable",
-              )
-            : requests;
+          ? requests.filter(isFullyMatchedRequest)
+          : filter === "matched_waiting"
+            ? requests.filter((r) => isFullyMatchedRequest(r) && Number(r.media_status) !== 5)
+            : filter === "unavailable"
+              ? requests.filter((r) =>
+                  r.type === "tv" && r.seasons?.length > 0
+                    ? r.seasons.some((s) => r.season_matches?.[s]?.status === "unavailable")
+                    : r.match?.status === "unavailable",
+                )
+              : requests;
 
   // Client-side, over whatever the status filter already produced — same
   // pattern as that filter, no backend round-trip. Matches title, requester,
