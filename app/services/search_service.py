@@ -26,8 +26,11 @@ class SearchService:
 
     def get_bib_edition(self, bib_id, force_refresh=False):
         """Disambiguates same-title search results — see
-        LibraryRepo.get_bib_edition for why this exists as its own on-demand
-        call instead of being baked into every search result."""
+        LibraryRepo.get_bib_edition for why a live catalogBibs fetch stays
+        its own on-demand call rather than happening for every search
+        result up front. A cached edition (from a prior call, for any bib_id)
+        is still surfaced automatically in search() results — see
+        LibraryRepo._attach_cached_editions."""
         return self.library_repo.get_bib_edition(bib_id, force_refresh=force_refresh)
 
     @staticmethod

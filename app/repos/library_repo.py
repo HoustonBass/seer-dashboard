@@ -427,6 +427,20 @@ class LibraryRepo:
 
         return self._singleflight.get_or_fetch(f"edition:{bib_id}", get_cached, fetch_and_cache, force_refresh=force_refresh)
 
+    def _attach_cached_editions(self, records):
+        """Fills in `record["edition"]` from the bib_editions cache when
+        already present (e.g. a prior "what edition is this?" click, or
+        another search that happened to include the same bib_id) — None
+        otherwise. Never triggers a live catalogBibs fetch itself; that
+        stays an on-demand get_bib_edition call (see its docstring for why
+        editions aren't fetched for every search result up front)."""
+        for record in records:
+            cached = self._edition_cache_get(record["bib_id"], EDITION_TTL_SECONDS)
+            record["edition"] = (
+                {k: v for k, v in cached.items() if k not in ("bib_id", "fetched_at")} if cached else None
+            )
+        return records
+
     # -- account summary (checkouts/holds — see scripts/discovery/account.md) --
 
     @staticmethod
@@ -678,4 +692,5 @@ class LibraryRepo:
             self._cache_set(query, format_filter, records)
             return records
 
-        return self._singleflight.get_or_fetch(cache_key, get_cached, fetch_and_cache, force_refresh=force_refresh)
+        records, source = self._singleflight.get_or_fetch(cache_key, get_cached, fetch_and_cache, force_refresh=force_refresh)
+        return self._attach_cached_editions(records), source

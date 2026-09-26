@@ -41,9 +41,12 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
   // identical from briefInfo alone — the only thing that actually tells them
   // apart (rental vs. two-disc special edition vs. anamorphic widescreen) is
   // catalogBibs' brief.edition, which costs an extra live call per bib_id.
-  // Fetched lazily on click, not for every result up front — see
-  // LibraryRepo.get_bib_edition.
-  const [edition, setEdition] = useState(null);
+  // Fetched lazily on click rather than for every result up front — see
+  // LibraryRepo.get_bib_edition — but `r.edition` arrives pre-filled
+  // whenever LibraryRepo already had this bib_id's edition cached from a
+  // prior lookup (see LibraryRepo._attach_cached_editions), so seed from
+  // that instead of always starting from "not fetched yet".
+  const [edition, setEdition] = useState(r.edition ?? null);
   const [editionLoading, setEditionLoading] = useState(false);
   const [editionError, setEditionError] = useState(null);
 

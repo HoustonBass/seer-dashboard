@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { fetchDvdActivityCount } from "../lib/api";
 
-// "How many DVDs do I already have checked out or on hold, combined" — a
-// net-new, read-only cross-reference against the live Fulton County account
-// (see app/repos/library_repo.py's get_dvd_activity_count and
-// scripts/discovery/account.md). Exposed as `refreshKey` so the header's
-// existing Refresh button can force a fresh read alongside the request list,
-// without this component needing to know why.
+// "How many DVDs do I already have checked out, and separately how many on
+// hold" — a net-new, read-only cross-reference against the live Fulton
+// County account (see app/repos/library_repo.py's get_dvd_activity_count and
+// scripts/discovery/account.md). Kept as two numbers, not one combined
+// total — a sum can't tell you how many of those are actually holds waiting
+// for pickup vs. DVDs already in hand. Exposed as `refreshKey` so the
+// header's existing Refresh button can force a fresh read alongside the
+// request list, without this component needing to know why.
 export default function DvdActivityBadge({ refreshKey }) {
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState(null);
@@ -33,9 +35,9 @@ export default function DvdActivityBadge({ refreshKey }) {
   return (
     <span
       className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--text-muted)] bg-[var(--unmatched-bg)]"
-      title={`${summary.checked_out} checked out + ${summary.on_hold} on hold`}
+      title="DVDs currently checked out vs. on hold at the library — kept separate, not summed, since a combined total can't tell you how many are actually holds"
     >
-      {summary.total} DVDs out/on hold
+      {summary.checked_out} checked out · {summary.on_hold} on hold
     </span>
   );
 }
