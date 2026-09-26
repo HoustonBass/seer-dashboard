@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchSettings, setSetting } from "../lib/api";
+import { getDefaultBranch, setDefaultBranch } from "../lib/defaultBranch";
 import { FILTER_OPTIONS, getDefaultFilter, setDefaultFilter } from "../lib/defaultFilter";
 import Toggle from "./Toggle";
 
@@ -8,14 +9,16 @@ import Toggle from "./Toggle";
 // directly, no restart needed) — see app/controllers/settings_controller.py.
 // A new switch just needs a REGISTRY entry to show up here automatically.
 //
-// Also holds the "default filter" preference — purely client-side
-// (localStorage, see lib/defaultFilter.js), not a backend feature switch,
-// but this popover is where UI preferences live so it's grouped here rather
-// than adding a second settings surface.
+// Also holds the "default filter"/"default branch" preferences — purely
+// client-side (localStorage, see lib/defaultFilter.js and
+// lib/defaultBranch.js), not backend feature switches, but this popover is
+// where UI preferences live so they're grouped here rather than adding a
+// second settings surface.
 export default function SettingsPopover({ onClose, onRefresh }) {
   const [switches, setSwitches] = useState(null);
   const [error, setError] = useState("");
   const [defaultFilter, setDefaultFilterState] = useState(getDefaultFilter);
+  const [defaultBranch, setDefaultBranchState] = useState(getDefaultBranch);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -78,6 +81,26 @@ export default function SettingsPopover({ onClose, onRefresh }) {
         </select>
         <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">
           Which filter is selected when the page loads. Doesn't change what's showing right now.
+        </p>
+      </div>
+
+      <div className="border-t border-[var(--rule)] pt-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-1.5">
+          Default branch
+        </div>
+        <input
+          type="text"
+          value={defaultBranch}
+          onChange={(e) => {
+            setDefaultBranchState(e.target.value);
+            setDefaultBranch(e.target.value);
+          }}
+          placeholder="e.g. Milton or MILTON"
+          className="w-full text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface)] px-2 py-1.5"
+        />
+        <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">
+          Branch name or code (hover a "Which branches?" pill to see a result's code). Highlights that
+          branch's pill when it has a copy.
         </p>
       </div>
 

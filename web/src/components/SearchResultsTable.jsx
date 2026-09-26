@@ -1,7 +1,18 @@
 import { useState } from "react";
 import HoverZoomImage from "./HoverZoomImage";
 import { useQuickAdd } from "../QuickAddContext";
+import { getDefaultBranch } from "../lib/defaultBranch";
 import { fetchBibBranches, fetchBibEdition } from "../lib/api";
+
+// A result's branch might match the saved preference by either its code
+// (what LibraryRepo/BiblioCommons actually key branches by, e.g. "MILTON")
+// or its display name ("Milton Branch") — the settings input doesn't force
+// the user to know which one they typed, so check both, case-insensitively.
+function isDefaultBranch(branch, defaultBranch) {
+  if (!defaultBranch) return false;
+  const needle = defaultBranch.trim().toLowerCase();
+  return branch.branch_code.toLowerCase() === needle || branch.branch_name.toLowerCase().includes(needle);
+}
 
 // Renders the ranked candidates from /api/search (same ranking as
 // scripts/library/search.sh — see scripts/discovery/search.md), as "index
@@ -37,6 +48,11 @@ export default function SearchResultsTable({ results, onChoose, chosenBibId }) {
 // on-demand "what edition is this?" fetch state (see below) — hooks can't
 // live inside a .map() callback.
 function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
+  // Read once per render rather than wired up as reactive state — this is a
+  // low-stakes preference (see lib/defaultBranch.js) set from the Settings
+  // popover, not something that needs to update mid-view without a re-render.
+  const defaultBranch = getDefaultBranch();
+
   // Same-title/same-year search results (e.g. three "Pacific Rim" DVDs) look
   // identical from briefInfo alone — the only thing that actually tells them
   // apart (rental vs. two-disc special edition vs. anamorphic widescreen) is
@@ -216,14 +232,19 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
                 branches.map((b, i) => (
                   <span
                     key={`${b.branch_code}-${i}`}
-                    title={b.call_number}
-                    className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                      b.status === "AVAILABLE"
-                        ? "text-[var(--available)] bg-[var(--available-bg)]"
-                        : "text-[var(--unmatched)] bg-[var(--unmatched-bg)]"
+                    title={`${b.branch_code} — ${b.call_number}`}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                      isDefaultBranch(b, defaultBranch)
+                        ? "ring-2 ring-[var(--primary)] " +
+                          (b.status === "AVAILABLE"
+                            ? "text-[var(--available)] bg-[var(--available-bg)]"
+                            : "text-[var(--unmatched)] bg-[var(--unmatched-bg)]")
+                        : b.status === "AVAILABLE"
+                          ? "text-[var(--available)] bg-[var(--available-bg)]"
+                          : "text-[var(--unmatched)] bg-[var(--unmatched-bg)]"
                     }`}
                   >
-                    {b.branch_name}
+                    {isDefaultBranch(b, defaultBranch) && "★"} {b.branch_name}
                   </span>
                 ))
               )}
