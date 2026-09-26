@@ -9,9 +9,7 @@ Run: python3 -m app.main  (from repo root; serves on :5001, or $APP_PORT if
 set — use a different port for test/dev runs so they don't collide with a
 server you already have running, e.g. `APP_PORT=5099 python3 -m app.main`)
 """
-import logging
 import os
-from pathlib import Path
 
 from flask import Flask, send_from_directory
 
@@ -43,18 +41,6 @@ WEB_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 def create_app():
     load_env()
     app = Flask(__name__, static_folder=WEB_DIST, static_url_path="")
-
-    # Containerized deployments (see Dockerfile) mount one folder at
-    # CONFIG_DIR holding config.yaml, logs.txt, and the *.db cache/match
-    # files — write there instead of just stdout so `docker logs` isn't the
-    # only way to see them. Local dev (CONFIG_DIR unset) keeps the default
-    # console-only logging.
-    config_dir = os.environ.get("CONFIG_DIR")
-    if config_dir:
-        handler = logging.FileHandler(Path(config_dir) / "logs.txt")
-        handler.setLevel(logging.INFO)
-        app.logger.addHandler(handler)
-        logging.getLogger("werkzeug").addHandler(handler)
 
     seerr_repo = SeerrRepo()
     library_repo = LibraryRepo()

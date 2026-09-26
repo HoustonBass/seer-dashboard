@@ -4,7 +4,9 @@ see Dockerfile). The .env path is the Python equivalent of scripts/lib/env.sh
 — needed now that app/ talks to Overseerr/BiblioCommons natively instead of
 shelling out to scripts that sourced .env themselves.
 """
+import logging
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -12,11 +14,21 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = REPO_ROOT / ".env"
 
-# Set by the container (see Dockerfile) to one mounted folder holding
-# config.yaml, logs.txt, and every *_cache.db/matches.db/library_auth_cache
-# file — a single bind-mount instead of separate .env + data/ mounts. Unset
-# for local dev, which keeps using repo-root .env + repo-root data/.
-CONFIG_DIR = os.environ.get("CONFIG_DIR")
+# Repos/services that hard-require a value (os.environ["KEY"], no fallback —
+# see app/repos/*.py's __init__ methods). Checked against config.yaml at
+# startup so a missing one is a clean log + exit instead of a KeyError deep
+# inside some repo's constructor once the app's already serving requests.
+REQUIRED_CONFIG_KEYS = ("LIBRARY_USERNAME", "LIBRARY_PASSWORD", "SEERR_BASE_URL", "SEERR_API_KEY", "TMDB_API_KEY")
+
+
+def _config_dir():
+    """Set by the container (see Dockerfile) to one mounted folder holding
+    config.yaml, logs.txt, and every *_cache.db/matches.db/library_auth_cache
+    file — a single bind-mount instead of separate .env + data/ mounts.
+    Unset for local dev, which keeps using repo-root .env + repo-root data/.
+    Read fresh from os.environ (not cached at import time) so it reflects
+    whatever the current process/test has set."""
+    return os.environ.get("CONFIG_DIR")
 
 
 def data_dir():
@@ -27,18 +39,42 @@ def data_dir():
     scratch files (see APP_PORT), independent of CONFIG_DIR."""
     if os.environ.get("DATA_DIR"):
         return Path(os.environ["DATA_DIR"])
-    if CONFIG_DIR:
-        return Path(CONFIG_DIR)
+    config_dir = _config_dir()
+    if config_dir:
+        return Path(config_dir)
     return REPO_ROOT / "data"
 
 
+def _configure_container_logging(config_dir):
+    handler = logging.FileHandler(Path(config_dir) / "logs.txt")
+    handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
+
+
 def load_env():
-    if CONFIG_DIR:
-        config_path = Path(CONFIG_DIR) / "config.yaml"
+    config_dir = _config_dir()
+    if config_dir:
+        _configure_container_logging(config_dir)
+        config_path = Path(config_dir) / "config.yaml"
         if not config_path.exists():
             raise RuntimeError(f"Missing config.yaml at {config_path} (copy config.yaml.example)")
         config = yaml.safe_load(config_path.read_text()) or {}
+        missing = [key for key in REQUIRED_CONFIG_KEYS if not config.get(key)]
+        if missing:
+            logging.error(
+                "config.yaml at %s is missing required field(s): %s — refusing to start",
+                config_path, ", ".join(missing),
+            )
+            sys.exit(1)
         for key, value in config.items():
+            if value is None:
+                # An empty YAML value (`KEY:` with nothing after it) parses
+                # to None — str(None) would literally set the env var to
+                # "None", which is truthy and breaks repos' `os.environ.get
+                # (...) or default` fallback for optional keys (e.g.
+                # LibraryRepo's LIBRARY_BASE_URL). Leave it unset instead, so
+                # that fallback actually fires, same as an empty .env line.
+                continue
             os.environ.setdefault(key, str(value))
         return
 
