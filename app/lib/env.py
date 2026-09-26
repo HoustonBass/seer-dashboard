@@ -23,20 +23,24 @@ REQUIRED_CONFIG_KEYS = ("LIBRARY_USERNAME", "LIBRARY_PASSWORD", "SEERR_BASE_URL"
 
 def _config_dir():
     """Set by the container (see Dockerfile) to one mounted folder holding
-    config.yaml, logs.txt, and every *_cache.db/matches.db/library_auth_cache
-    file — a single bind-mount instead of separate .env + data/ mounts.
-    Unset for local dev, which keeps using repo-root .env + repo-root data/.
-    Read fresh from os.environ (not cached at import time) so it reflects
-    whatever the current process/test has set."""
+    config.yaml, logs.txt, and (unless $DATA_DIR overrides it — see the
+    real deployment's run command, which mounts the `data` git submodule
+    separately) every *_cache.db/matches.db/library_auth_cache file.
+    Unset for local dev, which keeps using repo-root .env + repo-root data/
+    (itself a git submodule — see CLAUDE.md). Read fresh from os.environ
+    (not cached at import time) so it reflects whatever the current
+    process/test has set."""
     return os.environ.get("CONFIG_DIR")
 
 
 def data_dir():
-    """Where repos' SQLite files (and, under CONFIG_DIR, logs.txt) live.
-    Resolution order: $DATA_DIR override > $CONFIG_DIR (containerized —
-    everything flat in one mounted folder) > <repo root>/data (local dev
-    default). $DATA_DIR still works standalone for a second local instance's
-    scratch files (see APP_PORT), independent of CONFIG_DIR."""
+    """Where repos' SQLite files (and, under CONFIG_DIR with no DATA_DIR
+    override, logs.txt) live. Resolution order: $DATA_DIR override >
+    $CONFIG_DIR (containerized, flat mounted folder) > <repo root>/data
+    (local dev default, also where the `data` submodule lands). $DATA_DIR
+    lets a container mount the submodule-backed data dir separately from
+    CONFIG_DIR's config.yaml/logs.txt, and also works standalone for a
+    second local instance's scratch files (see APP_PORT)."""
     if os.environ.get("DATA_DIR"):
         return Path(os.environ["DATA_DIR"])
     config_dir = _config_dir()

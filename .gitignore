@@ -1,17 +1,13 @@
 .env
 node_modules/
 # Local scratch folder for testing the container's CONFIG_DIR mount (see
-# Dockerfile/config.yaml.example) — same idea as the data/*.db ignores
-# below, just under config/ instead of data/.
+# Dockerfile/config.yaml.example).
 config/
 scripts/discovery/captured-*.json
 scripts/discovery/probe-*.json
-data/cache.db
-data/seerr_cache.db
-data/library_cache.db
-data/matches.db
-data/tmdb_cache.db
-data/failed_quick_adds.db
+# data/*.db files are tracked in the `data` git submodule (dbs branch of
+# this repo's remote), not ignored here anymore. library_auth_cache and
+# backend.log aren't part of that submodule — still local-dev scratch.
 data/library_auth_cache
 data/backend.log
 __pycache__/
