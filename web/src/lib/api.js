@@ -16,10 +16,10 @@ export const WHOLE_ITEM_SEASON = 0;
 // render as each request's title/TMDB data resolves rather than waiting for
 // the whole batch (a cold cache used to mean ~250 requests before anything
 // appeared). `onRow` is called once per line as it arrives.
-export async function streamRequests(filter = "all", { refresh = false } = {}, onRow) {
+export async function streamRequests(filter = "all", { refresh = false, signal } = {}, onRow) {
   const params = new URLSearchParams({ filter });
   if (refresh) params.set("refresh", "1");
-  const res = await fetch(`/api/requests?${params}`);
+  const res = await fetch(`/api/requests?${params}`, { signal });
   if (!res.ok) throw new Error(`fetchRequests failed: ${res.status}`);
 
   const reader = res.body.getReader();

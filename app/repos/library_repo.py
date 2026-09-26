@@ -26,7 +26,7 @@ DB_PATH = data_dir() / "library_cache.db"
 AUTH_CACHE_PATH = data_dir() / "library_auth_cache"
 DEFAULT_TTL_SECONDS = 6 * 60 * 60  # availability changes during the day, but not by the minute
 ACCOUNT_SUMMARY_TTL_SECONDS = 5 * 60  # checkouts/holds change with real-world activity — short TTL, same reasoning as SeerrRepo's request cache
-EDITION_TTL_SECONDS = 24 * 60 * 60  # a catalog record's edition/publication note never changes — same reasoning as TmdbRepo's TTL
+EDITION_TTL_SECONDS = 7 * 24 * 60 * 60  # a catalog record's edition/publication note never changes — same reasoning as TmdbRepo's TTL
 TEST_DELAY_ENV_VAR = "LIBRARY_TEST_FETCH_DELAY_SECONDS"
 # bc_access_token/session_id's real lifetime is undocumented (see
 # scripts/discovery/auth.md) — this is a conservative guess, not a confirmed
@@ -123,6 +123,12 @@ class LibraryRepo:
                 publication_note TEXT,
                 description TEXT,
                 fetched_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS empty_searches (
+                query TEXT NOT NULL,
+                format_filter TEXT NOT NULL DEFAULT '',
+                fetched_at REAL NOT NULL,
+                PRIMARY KEY (query, format_filter)
             );
             """
         )
@@ -569,6 +575,7 @@ class LibraryRepo:
 
     def _cache_get(self, query, format_filter, ttl):
         cutoff = time.time() - ttl
+        format_filter = format_filter or ""
         with self._db_lock:
             rows = self._conn.execute(
                 """
@@ -578,9 +585,19 @@ class LibraryRepo:
                 WHERE s.query = ? AND s.format_filter = ? AND s.fetched_at >= ?
                 ORDER BY s.rank_order
                 """,
-                (query, format_filter or "", cutoff),
+                (query, format_filter, cutoff),
             ).fetchall()
-        return [dict(row) for row in rows] if rows else None
+            if rows:
+                return [dict(row) for row in rows]
+            # A prior live fetch that genuinely found nothing doesn't add any
+            # row to `searches` (there's nothing to rank), so an empty result
+            # needs its own marker table — otherwise it's indistinguishable
+            # from "never fetched" and every lookup re-hits the live API.
+            empty = self._conn.execute(
+                "SELECT 1 FROM empty_searches WHERE query = ? AND format_filter = ? AND fetched_at >= ?",
+                (query, format_filter, cutoff),
+            ).fetchone()
+        return [] if empty else None
 
     def _cache_set(self, query, format_filter, records):
         fetched_at = time.time()
@@ -588,6 +605,21 @@ class LibraryRepo:
         with self._db_lock:
             self._conn.execute(
                 "DELETE FROM searches WHERE query = ? AND format_filter = ?",
+                (query, format_filter),
+            )
+            if not records:
+                self._conn.execute(
+                    """
+                    INSERT INTO empty_searches (query, format_filter, fetched_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(query, format_filter) DO UPDATE SET fetched_at=excluded.fetched_at
+                    """,
+                    (query, format_filter, fetched_at),
+                )
+                self._conn.commit()
+                return
+            self._conn.execute(
+                "DELETE FROM empty_searches WHERE query = ? AND format_filter = ?",
                 (query, format_filter),
             )
             for rank_order, record in enumerate(records):
@@ -630,6 +662,12 @@ class LibraryRepo:
 
     def search(self, query, format_filter="", ttl=DEFAULT_TTL_SECONDS, force_refresh=False):
         """Returns (records, source) where source is "cache" or "live"."""
+        # A stray leading/trailing/doubled space doesn't change matchScore
+        # (_normalize already collapses whitespace before comparing) or,
+        # almost certainly, the live Solr search itself — but the cache key
+        # was using the raw string, so "title" and "title " looked like two
+        # different queries and forced an avoidable live re-fetch.
+        query = re.sub(r"\s+", " ", query.strip())
         cache_key = (query, format_filter or "")
 
         def get_cached():

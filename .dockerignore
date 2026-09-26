@@ -1,0 +1,14 @@
+.git/
+.env
+config/
+data/
+node_modules/
+web/node_modules/
+web/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+bruno/
+scripts/discovery/captured-*.json
+scripts/discovery/probe-*.json

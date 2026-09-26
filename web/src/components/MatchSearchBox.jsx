@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { searchLibrary } from "../lib/api";
 import SearchResultsTable from "./SearchResultsTable";
 
-const DEFAULT_FORMAT = "DVD";
+export const DEFAULT_FORMAT = "DVD";
 
 // The actual "search the library, pick a candidate, or mark it not in
 // library" unit — extracted out of MatchPanel so it can be reused once per
@@ -197,8 +197,9 @@ export default function MatchSearchBox({ defaultQuery, match, autoSearchKey, onC
               : "Not the right title? Confirm the library doesn't have this one."}
           </span>
           <button
-            onClick={onMarkUnavailable}
+            onClick={(e) => onMarkUnavailable(e.altKey)}
             className="ml-auto shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)]"
+            title="Mark not in library (Option/Alt+click to advance — next season if TV, otherwise the next unmatched request)"
           >
             Mark not in library
           </button>

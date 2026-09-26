@@ -174,7 +174,7 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
 
         <button
           onClick={(e) => onChoose(r, e.altKey)}
-          title={chosen ? undefined : "Option/Alt+click to choose and jump to the next unmatched request"}
+          title={chosen ? undefined : "Option/Alt+click to choose and advance — next season if TV, otherwise the next unmatched request"}
           className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border transition-colors ${
             chosen
               ? "border-[var(--available)] text-[var(--available)] bg-[var(--available-bg)]"

@@ -1,0 +1,19 @@
+# Same keys as .env.example — this is the config file the container reads
+# instead of .env (see CONFIG_DIR in app/lib/env.py and the Dockerfile).
+# Copy to config.yaml inside the folder you mount at /config; that folder
+# also ends up holding logs.txt and the *.db cache/match files at runtime.
+
+# Fulton County Library System credentials (physical library card account)
+LIBRARY_USERNAME:
+LIBRARY_PASSWORD:
+LIBRARY_BASE_URL:
+
+# Overseerr instance
+SEERR_BASE_URL:
+SEERR_API_KEY:
+
+# TMDB (The Movie Database) — used to enrich Overseerr requests with data
+# Overseerr's own title-lookup proxy doesn't expose (release year, overview,
+# cast/crew, poster, etc). Get a v3 API key at
+# https://www.themoviedb.org/settings/api
+TMDB_API_KEY:

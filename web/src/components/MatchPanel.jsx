@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { WHOLE_ITEM_SEASON, clearMatch, markUnavailable, placeHold, saveMatch } from "../lib/api";
+import { useEffect, useRef, useState } from "react";
+import { WHOLE_ITEM_SEASON, clearMatch, markUnavailable, placeHold, saveMatch, searchLibrary } from "../lib/api";
+import { seasonNumberWord } from "../lib/labels";
 import HoverZoomImage from "./HoverZoomImage";
-import MatchSearchBox from "./MatchSearchBox";
+import MatchSearchBox, { DEFAULT_FORMAT } from "./MatchSearchBox";
 
 // Detail/action panel for one selected Overseerr request, styled as a
 // library "catalog slip". Movies get one MatchSearchBox for the whole item;
@@ -10,10 +11,54 @@ import MatchSearchBox from "./MatchSearchBox";
 // per-(request, season) for TV. See CLAUDE.md's TV-matching section.
 export default function MatchPanel({ request, onMatchChange, onAdvance }) {
   const isTv = request.type === "tv" && request.seasons?.length > 0;
+  const sortedSeasons = isTv ? [...request.seasons].sort((a, b) => a - b) : [];
+  const [expandedSeason, setExpandedSeason] = useState(null);
+  const prefetchedSeasonRef = useRef(null);
+
+  // A fresh request (or switching from a movie to a show) shouldn't carry
+  // over whichever season happened to be open on the previous selection.
+  useEffect(() => {
+    setExpandedSeason(null);
+  }, [request.id]);
+
+  function nextSeasonAfter(seasonNumber) {
+    const idx = sortedSeasons.indexOf(seasonNumber);
+    if (idx === -1) return null;
+    return sortedSeasons[idx + 1] ?? null;
+  }
+
+  // Option/Alt+click within a season pages to the *next season* of the same
+  // show rather than jumping straight to the next request — only once
+  // there's no next season left does it fall through to the request-level
+  // advance (App.jsx's advanceToNextUnmatched).
+  function advanceFromSeason(seasonNumber) {
+    const next = nextSeasonAfter(seasonNumber);
+    if (next != null) setExpandedSeason(next);
+    else onAdvance?.();
+  }
+
+  // The moment a season opens, warm the *next* season's search a beat later
+  // (same reasoning as App.jsx's next-request prefetch) so LibraryRepo's
+  // cache is already populated by the time advanceFromSeason gets there.
+  useEffect(() => {
+    if (!isTv || expandedSeason == null) return;
+    const next = nextSeasonAfter(expandedSeason);
+    if (next == null) return;
+    const query = `${request.title} season ${seasonNumberWord(next)}`;
+    const key = `${request.id}:${next}`;
+    if (prefetchedSeasonRef.current === key) return;
+    const timer = setTimeout(() => {
+      prefetchedSeasonRef.current = key;
+      searchLibrary(query, DEFAULT_FORMAT).catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTv, expandedSeason, request.id]);
 
   // `advance` comes from Option/Alt+click on the "Choose" button (see
-  // SearchResultsTable) — saves the match same as a plain click, then jumps
-  // to the next request that still needs one (App.jsx's advanceToNextUnmatched).
+  // SearchResultsTable) — saves the match, then for a movie jumps to the
+  // next request that still needs one; for a TV season, pages to the next
+  // season instead (see advanceFromSeason).
   async function handleChoose(seasonNumber, candidate, advance) {
     await saveMatch({
       request_id: request.id,
@@ -34,7 +79,10 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
       availability_status: candidate.availability_status,
       hold_id: null,
     });
-    if (advance) onAdvance?.();
+    if (advance) {
+      if (seasonNumber === WHOLE_ITEM_SEASON) onAdvance?.();
+      else advanceFromSeason(seasonNumber);
+    }
   }
 
   // Places a REAL hold on the live account — see app/repos/library_repo.py's
@@ -47,7 +95,7 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
     return result;
   }
 
-  async function handleMarkUnavailable(seasonNumber) {
+  async function handleMarkUnavailable(seasonNumber, advance) {
     await markUnavailable({
       request_id: request.id,
       season_number: seasonNumber,
@@ -56,6 +104,10 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
       seerr_title: request.title,
     });
     onMatchChange(request.id, seasonNumber, { status: "unavailable", bib_id: null, bib_title: null, bib_subtitle: null });
+    if (advance) {
+      if (seasonNumber === WHOLE_ITEM_SEASON) onAdvance?.();
+      else advanceFromSeason(seasonNumber);
+    }
   }
 
   // Bulk "give up on whatever's left" action for TV (see SeasonAccordion's
@@ -64,8 +116,9 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
   // Reuses handleMarkUnavailable per season (same persistence + local-state
   // update path as the single-season button), fired concurrently since each
   // season is an independent (request_id, season_number) row.
-  async function handleMarkAllUnavailable(seasonNumbers) {
+  async function handleMarkAllUnavailable(seasonNumbers, advance) {
     await Promise.all(seasonNumbers.map((seasonNumber) => handleMarkUnavailable(seasonNumber)));
+    if (advance) onAdvance?.();
   }
 
   async function handleClear(seasonNumber) {
@@ -113,6 +166,8 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
         {isTv ? (
           <SeasonAccordion
             request={request}
+            expanded={expandedSeason}
+            onToggle={setExpandedSeason}
             onChoose={handleChoose}
             onMarkUnavailable={handleMarkUnavailable}
             onMarkAllUnavailable={handleMarkAllUnavailable}
@@ -126,7 +181,7 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
             match={request.match}
             autoSearchKey={request.id}
             onChoose={(candidate, advance) => handleChoose(WHOLE_ITEM_SEASON, candidate, advance)}
-            onMarkUnavailable={() => handleMarkUnavailable(WHOLE_ITEM_SEASON)}
+            onMarkUnavailable={(advance) => handleMarkUnavailable(WHOLE_ITEM_SEASON, advance)}
             onClear={() => handleClear(WHOLE_ITEM_SEASON)}
             onPlaceHold={(match) => handlePlaceHold(WHOLE_ITEM_SEASON, match)}
           />
@@ -167,8 +222,7 @@ function seasonStatusPill(match) {
 // MatchSearchBox is mounted, so selecting a show doesn't fire off N
 // concurrent library searches for every season at once — just the one
 // you're actually looking at.
-function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavailable, onClear, onPlaceHold }) {
-  const [expanded, setExpanded] = useState(null);
+function SeasonAccordion({ request, expanded, onToggle, onChoose, onMarkUnavailable, onMarkAllUnavailable, onClear, onPlaceHold }) {
   const [markingAll, setMarkingAll] = useState(false);
   const [markAllError, setMarkAllError] = useState(null);
   const seasons = [...request.seasons].sort((a, b) => a - b);
@@ -178,11 +232,11 @@ function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavai
   // re-send them).
   const unsetSeasons = seasons.filter((s) => !request.season_matches?.[s]);
 
-  async function handleMarkAllUnavailable() {
+  async function handleMarkAllUnavailable(advance) {
     setMarkingAll(true);
     setMarkAllError(null);
     try {
-      await onMarkAllUnavailable(unsetSeasons);
+      await onMarkAllUnavailable(unsetSeasons, advance);
     } catch (e) {
       setMarkAllError(e.message);
     } finally {
@@ -204,9 +258,9 @@ function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavai
         </div>
         {unsetSeasons.length > 0 && (
           <button
-            onClick={handleMarkAllUnavailable}
+            onClick={(e) => handleMarkAllUnavailable(e.altKey)}
             disabled={markingAll}
-            title={`Mark all ${unsetSeasons.length} undecided season${unsetSeasons.length === 1 ? "" : "s"} not in library`}
+            title={`Mark all ${unsetSeasons.length} undecided season${unsetSeasons.length === 1 ? "" : "s"} not in library (Option/Alt+click to jump to the next unmatched request)`}
             className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50 whitespace-nowrap"
           >
             {markingAll ? "Marking…" : `Mark remaining ${unsetSeasons.length} not in library`}
@@ -229,7 +283,7 @@ function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavai
           <div key={seasonNumber} className="border-b border-[var(--rule)] last:border-none">
             <button
               type="button"
-              onClick={() => setExpanded(isOpen ? null : seasonNumber)}
+              onClick={() => onToggle(isOpen ? null : seasonNumber)}
               className="w-full flex items-center gap-3 py-2.5 cursor-pointer hover:bg-[var(--surface)] text-left"
             >
               <span className="mono text-xs text-[var(--text-muted)] w-8">S{seasonNumber}</span>
@@ -243,11 +297,11 @@ function SeasonAccordion({ request, onChoose, onMarkUnavailable, onMarkAllUnavai
               <div className="pb-4 pl-11">
                 <MatchSearchBox
                   key={`${request.id}-${seasonNumber}`}
-                  defaultQuery={`${request.title} season ${seasonNumber}`}
+                  defaultQuery={`${request.title} season ${seasonNumberWord(seasonNumber)}`}
                   match={match}
                   autoSearchKey={`${request.id}-${seasonNumber}`}
                   onChoose={(candidate, advance) => onChoose(seasonNumber, candidate, advance)}
-                  onMarkUnavailable={() => onMarkUnavailable(seasonNumber)}
+                  onMarkUnavailable={(advance) => onMarkUnavailable(seasonNumber, advance)}
                   onClear={() => onClear(seasonNumber)}
                   onPlaceHold={(m) => onPlaceHold(seasonNumber, m)}
                 />

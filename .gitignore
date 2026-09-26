@@ -1,5 +1,9 @@
 .env
 node_modules/
+# Local scratch folder for testing the container's CONFIG_DIR mount (see
+# Dockerfile/config.yaml.example) — same idea as the data/*.db ignores
+# below, just under config/ instead of data/.
+config/
 scripts/discovery/captured-*.json
 scripts/discovery/probe-*.json
 data/cache.db

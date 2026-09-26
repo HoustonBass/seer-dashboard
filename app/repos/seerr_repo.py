@@ -25,7 +25,7 @@ from app.lib.singleflight import SingleFlightCache
 from app.lib.feature_switch import delay_switch
 
 DB_PATH = data_dir() / "seerr_cache.db"
-DEFAULT_TTL_SECONDS = 5 * 60  # request/media status changes fairly often — short TTL
+DEFAULT_TTL_SECONDS = 24 * 60 * 60
 TITLE_LOOKUP_WORKERS = 10  # neither Overseerr nor TMDB offer a bulk title-lookup
 # endpoint — this is one HTTP call per request just to resolve a title, so on
 # a cold cache with hundreds of requests that's the dominant cost. They're

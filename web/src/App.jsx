@@ -6,8 +6,10 @@ import QuickAddPanel from "./components/QuickAddPanel";
 import RequestList from "./components/RequestList";
 import SettingsPopover from "./components/SettingsPopover";
 import { QuickAddProvider } from "./QuickAddContext";
-import { streamRequests } from "./lib/api";
+import { DEFAULT_FORMAT } from "./components/MatchSearchBox";
+import { searchLibrary, streamRequests } from "./lib/api";
 import { FILTER_OPTIONS, getDefaultFilter } from "./lib/defaultFilter";
+import { seasonNumberWord } from "./lib/labels";
 import { useThemeMode } from "./theme/ThemeModeContext";
 
 // "unmatched"/"matched" aren't Overseerr request statuses — Overseerr has no
@@ -48,6 +50,8 @@ export default function App() {
   const [failedQuickAddsRefreshKey, setFailedQuickAddsRefreshKey] = useState(0);
   const { mode, toggle: toggleTheme } = useThemeMode();
   const loadGeneration = useRef(0);
+  const loadAbortController = useRef(null);
+  const prefetchedForRef = useRef(null);
 
   // The quick-add search only makes sense in the context of whatever request
   // you were matching when you spotted it — switching to a different request
@@ -58,36 +62,55 @@ export default function App() {
   }
 
   async function load(refresh = false) {
+    // Abort whatever load is still in flight before starting a new one —
+    // otherwise a still-running /api/requests stream (each one re-resolves
+    // title/TMDB for every request, ~250 of them) keeps costing real backend
+    // work even after its result is discarded client-side. This also means
+    // React 18 StrictMode's dev-only double-invoke of this effect (mount,
+    // cleanup, remount — see main.jsx) cancels the first mount's request via
+    // the effect's cleanup below instead of both actually hitting the
+    // backend, which is what made filter=all appear to fire twice on load.
+    loadAbortController.current?.abort();
+    const controller = new AbortController();
+    loadAbortController.current = controller;
+
     // Rows arrive one at a time (see streamRequests) — if the filter changes
     // (or Refresh is clicked) mid-stream, this guard drops the stale
     // stream's late-arriving rows instead of mixing them into the new one.
+    // Kept alongside the abort above as a belt-and-suspenders guard for any
+    // row already buffered client-side by the time an abort lands.
     const generation = ++loadGeneration.current;
     setRequests(null);
     setRequestsSource(null);
     const seenIds = new Set();
     const backendFilter = OVERSEERR_FILTERS.has(filter) ? filter : "all";
 
-    await streamRequests(backendFilter, { refresh }, ({ row, source }) => {
-      if (loadGeneration.current !== generation) return;
-      seenIds.add(row.id);
-      setRequestsSource(source);
-      // Merge this one row into whatever `requests` currently holds, rather
-      // than replacing the whole array from a private closure array — a
-      // closure-tracked array has no idea about matches chosen mid-stream
-      // via updateLocalMatch, so replacing wholesale on every incoming row
-      // used to stomp that optimistic update back to unmatched the next
-      // time any other row (anywhere in the ~250) finished resolving.
-      setRequests((prev) => {
-        const next = prev ? prev.filter((r) => r.id !== row.id) : [];
-        next.push(row);
-        // Rows resolve in completion order, not Overseerr's "most recently
-        // added" order — re-sort by id (descending) on every update so the
-        // list settles into the right place as each one streams in, instead
-        // of looking shuffled by network timing.
-        next.sort((a, b) => b.id - a.id);
-        return next;
+    try {
+      await streamRequests(backendFilter, { refresh, signal: controller.signal }, ({ row, source }) => {
+        if (loadGeneration.current !== generation) return;
+        seenIds.add(row.id);
+        setRequestsSource(source);
+        // Merge this one row into whatever `requests` currently holds, rather
+        // than replacing the whole array from a private closure array — a
+        // closure-tracked array has no idea about matches chosen mid-stream
+        // via updateLocalMatch, so replacing wholesale on every incoming row
+        // used to stomp that optimistic update back to unmatched the next
+        // time any other row (anywhere in the ~250) finished resolving.
+        setRequests((prev) => {
+          const next = prev ? prev.filter((r) => r.id !== row.id) : [];
+          next.push(row);
+          // Rows resolve in completion order, not Overseerr's "most recently
+          // added" order — re-sort by id (descending) on every update so the
+          // list settles into the right place as each one streams in, instead
+          // of looking shuffled by network timing.
+          next.sort((a, b) => b.id - a.id);
+          return next;
+        });
       });
-    });
+    } catch (e) {
+      if (e.name === "AbortError") return; // superseded by a newer load — not a real failure
+      throw e;
+    }
 
     if (loadGeneration.current === generation && selected && !seenIds.has(selected.id)) {
       setSelected(null);
@@ -96,6 +119,7 @@ export default function App() {
 
   useEffect(() => {
     load();
+    return () => loadAbortController.current?.abort();
   }, [filter]);
 
   // Choosing/clearing a match updates just that one row in place — no
@@ -152,19 +176,61 @@ export default function App() {
           [r.title, r.requested_by, r.tmdb?.director].some((field) => field?.toLowerCase().includes(searchNorm)),
         );
 
-  // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
-  // the match and jumps straight to the next request still needing one —
-  // "next" means the next row below the current selection in whatever order
-  // the left pane is currently showing (respects the active filter/search),
-  // not the full unfiltered request list. No-op if nothing after the
-  // current selection still needs a match.
-  function advanceToNextUnmatched() {
-    if (!selected || !searchedRequests) return;
+  // Shared by advanceToNextUnmatched and the prefetch effect below — "next"
+  // means the next row below the current selection in whatever order the
+  // left pane is currently showing (respects the active filter/search), not
+  // the full unfiltered request list.
+  function findNextUnmatched() {
+    if (!selected || !searchedRequests) return null;
     const idx = searchedRequests.findIndex((r) => r.id === selected.id);
-    if (idx === -1) return;
-    const next = searchedRequests.slice(idx + 1).find(isUnmatchedRequest);
+    if (idx === -1) return null;
+    return searchedRequests.slice(idx + 1).find(isUnmatchedRequest) ?? null;
+  }
+
+  // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
+  // the match and jumps straight to the next request still needing one. No-op
+  // if nothing after the current selection still needs a match.
+  function advanceToNextUnmatched() {
+    const next = findNextUnmatched();
     if (next) selectRequest(next);
   }
+
+  // Mirrors the query MatchSearchBox's autoSearchKey effect builds for a
+  // request (see MatchPanel.jsx) — must stay in sync with that or the
+  // prefetch below warms a cache key the real search never asks for.
+  function defaultSearchQueryFor(request) {
+    if (request.type === "tv" && request.seasons?.length > 0) {
+      const season = [...request.seasons].sort((a, b) => a - b).find((s) => !request.season_matches?.[s]);
+      if (season == null) return null;
+      return `${request.title} season ${seasonNumberWord(season)}`;
+    }
+    return request.title;
+  }
+
+  // Selecting a request already triggers its own auto-search (MatchSearchBox's
+  // autoSearchKey effect) — this warms the *next* unmatched request's search a
+  // beat later, so LibraryRepo's cache is already populated by the time you
+  // actually get there (Option/Alt+click or a manual click). Delayed instead
+  // of immediate so it doesn't compete with the just-selected request's own
+  // (higher-priority) search for the same backend. Keyed by
+  // (selected, next, query) via a ref rather than firing straight from a
+  // dependency array — searchedRequests is a fresh array reference on every
+  // render, so without the ref this would refire (though harmlessly, since a
+  // cache hit is cheap) on any unrelated re-render, not just an actual change.
+  useEffect(() => {
+    const next = findNextUnmatched();
+    if (!next) return;
+    const query = defaultSearchQueryFor(next);
+    if (!query) return;
+    const key = `${selected?.id}:${next.id}:${query}`;
+    if (prefetchedForRef.current === key) return;
+    const timer = setTimeout(() => {
+      prefetchedForRef.current = key;
+      searchLibrary(query, DEFAULT_FORMAT).catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, searchedRequests]);
 
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -239,7 +305,15 @@ export default function App() {
             >
               ⚙
             </button>
-            {settingsOpen && <SettingsPopover onClose={() => setSettingsOpen(false)} />}
+            {settingsOpen && (
+              <SettingsPopover
+                onClose={() => setSettingsOpen(false)}
+                onRefresh={() => {
+                  load(true);
+                  setDvdCountRefreshKey((k) => k + 1);
+                }}
+              />
+            )}
           </div>
         </div>
       </header>

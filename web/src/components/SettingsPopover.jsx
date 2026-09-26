@@ -12,7 +12,7 @@ import Toggle from "./Toggle";
 // (localStorage, see lib/defaultFilter.js), not a backend feature switch,
 // but this popover is where UI preferences live so it's grouped here rather
 // than adding a second settings surface.
-export default function SettingsPopover({ onClose }) {
+export default function SettingsPopover({ onClose, onRefresh }) {
   const [switches, setSwitches] = useState(null);
   const [error, setError] = useState("");
   const [defaultFilter, setDefaultFilterState] = useState(getDefaultFilter);
@@ -79,6 +79,19 @@ export default function SettingsPopover({ onClose }) {
         <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">
           Which filter is selected when the page loads. Doesn't change what's showing right now.
         </p>
+      </div>
+
+      <div className="border-t border-[var(--rule)] pt-3">
+        <button
+          onClick={() => {
+            onRefresh?.();
+            onClose();
+          }}
+          className="w-full text-sm rounded border border-[var(--rule-strong)] px-2 py-1.5 hover:bg-[var(--surface)]"
+          title="Bypass cache and re-fetch live from Overseerr"
+        >
+          Refresh data
+        </button>
       </div>
 
       <div className="border-t border-[var(--rule)] pt-3 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">

@@ -215,6 +215,48 @@ def test_search_caches_second_call_without_more_http_calls(repo):
     assert call_count["n"] == calls_after_first
 
 
+def test_search_caches_empty_results_without_more_http_calls(repo):
+    # A genuine "the library doesn't have this" response has no bibs to rank,
+    # so _cache_set's per-record loop never runs — regression test for that
+    # not silently meaning "never cached, keep hitting the live API".
+    empty_response = {"catalogSearch": {"results": []}, "entities": {"bibs": {}}}
+    call_count = {"n": 0}
+
+    def counting_get(*args, **kwargs):
+        call_count["n"] += 1
+        return FakeResponse(empty_response)
+
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", side_effect=counting_get):
+        records, source = repo.search("christmas under wraps", "DVD")
+        calls_after_first = call_count["n"]
+        cached_records, cached_source = repo.search("christmas under wraps", "DVD")
+
+    assert records == []
+    assert source == "live"
+    assert cached_records == []
+    assert cached_source == "cache"
+    assert call_count["n"] == calls_after_first
+
+
+def test_search_query_whitespace_does_not_bust_cache(repo):
+    call_count = {"n": 0}
+
+    def counting_get(*args, **kwargs):
+        call_count["n"] += 1
+        return FakeResponse(SEARCH_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", side_effect=counting_get):
+        repo.search("terminator", "DVD")
+        calls_after_first = call_count["n"]
+        records, source = repo.search("  terminator ", "DVD")
+
+    assert source == "cache"
+    assert call_count["n"] == calls_after_first
+    assert len(records) == 2
+
+
 def test_force_refresh_bypasses_cache(repo):
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(SEARCH_RESPONSE)):
