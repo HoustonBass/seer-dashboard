@@ -101,7 +101,7 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
             // here — this badge explains why instead of just vanishing.
             <span
               title={`Already requested as "${r.existing_match.seerr_title}" — quick-add is disabled to avoid a duplicate request`}
-              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full border border-[var(--available)]/40 bg-[var(--available-bg)] text-[var(--available)] text-xs leading-none flex items-center justify-center shadow opacity-0 scale-90 transition-all group-hover:opacity-100 group-hover:scale-100"
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full border border-[var(--available)]/40 bg-[var(--available-bg)] text-[var(--available)] text-xs leading-none flex items-center justify-center shadow"
             >
               ✓
             </span>
@@ -152,7 +152,7 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
               <button
                 onClick={handleShowEdition}
                 disabled={editionLoading}
-                className="font-semibold text-[var(--accent)] hover:underline disabled:opacity-50"
+                className="font-semibold text-[var(--text-muted)] hover:text-[var(--text)] hover:underline disabled:opacity-50"
                 title="Same title as another result? See what edition this specific copy is"
               >
                 {editionLoading ? "Checking edition…" : "What edition is this?"}
@@ -178,7 +178,7 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
           className={`shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border transition-colors ${
             chosen
               ? "border-[var(--available)] text-[var(--available)] bg-[var(--available-bg)]"
-              : "border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)]"
+              : "border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-contrast)]"
           }`}
         >
           {chosen && "✓"} {chosen ? "Chosen" : "Choose"}

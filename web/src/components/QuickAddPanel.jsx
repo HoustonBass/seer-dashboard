@@ -120,7 +120,7 @@ export default function QuickAddPanel({ libraryResult, onClose, onAddFailed }) {
             <button
               onClick={() => runSearch()}
               disabled={loading}
-              className="text-sm font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50"
+              className="text-sm font-semibold px-3 py-1.5 rounded border border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-contrast)] disabled:opacity-50"
             >
               Search
             </button>
@@ -168,7 +168,7 @@ export default function QuickAddPanel({ libraryResult, onClose, onAddFailed }) {
                   <button
                     onClick={() => handleAdd(c)}
                     disabled={addingId === c.tmdb_id}
-                    className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50"
+                    className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-contrast)] disabled:opacity-50"
                   >
                     {addingId === c.tmdb_id ? "Adding…" : c.media_type === "movie" ? "Request & mark found" : "Request"}
                   </button>

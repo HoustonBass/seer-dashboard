@@ -11,6 +11,7 @@ export default function HoverZoomImage({ src, zoomSrc, alt = "", className = "",
   const [rect, setRect] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const boxRef = useRef(null);
+  const imgRef = useRef(null);
 
   // Swapping `src` on an existing <img> leaves the previous image's decoded
   // pixels on screen until the new one finishes loading — jarring when
@@ -19,6 +20,12 @@ export default function HoverZoomImage({ src, zoomSrc, alt = "", className = "",
   // covers that gap instead of a stale image.
   useEffect(() => {
     setLoaded(false);
+    // If the browser already has this image cached, it can finish loading
+    // (and fire `load`) before this effect runs and resets `loaded` —
+    // the onLoad handler below then never fires again, leaving the
+    // skeleton stuck on top of an already-loaded image forever. Catch
+    // that case explicitly instead of relying only on onLoad/onError.
+    if (imgRef.current?.complete) setLoaded(true);
   }, [src]);
 
   function handleEnter() {
@@ -39,6 +46,7 @@ export default function HoverZoomImage({ src, zoomSrc, alt = "", className = "",
         className={`relative overflow-hidden block ${className}`}
       >
         <img
+          ref={imgRef}
           src={src}
           alt={alt}
           className="absolute inset-0 w-full h-full object-cover"

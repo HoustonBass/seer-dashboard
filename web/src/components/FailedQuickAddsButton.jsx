@@ -120,7 +120,7 @@ export default function FailedQuickAddsButton({ refreshKey }) {
                     <button
                       onClick={() => handleRetry(f.id)}
                       disabled={busyId === f.id}
-                      className="text-xs font-semibold px-2.5 py-1 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50"
+                      className="text-xs font-semibold px-2.5 py-1 rounded border border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-contrast)] disabled:opacity-50"
                     >
                       {busyId === f.id ? "…" : "Retry"}
                     </button>

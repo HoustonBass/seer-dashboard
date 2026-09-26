@@ -21,16 +21,6 @@ export default function MatchSearchBox({ defaultQuery, match, autoSearchKey, onC
   const [holdError, setHoldError] = useState(null);
   const searchGeneration = useRef(0);
 
-  // The stored match.availability_status is only a snapshot from whenever
-  // the match was made — it's null for anything matched before this feature
-  // existed (i.e. most real matches), and can go stale either direction
-  // after that (checked back in, or someone else grabbed the last copy).
-  // This panel already auto-searches on every open, so prefer that live
-  // result for the matched bib when we have it; fall back to the stored
-  // snapshot only if the live search didn't happen to include it.
-  const liveAvailabilityStatus = results.find((r) => r.bib_id === match?.bib_id)?.availability_status;
-  const availabilityStatus = liveAvailabilityStatus ?? match?.availability_status;
-
   async function handlePlaceHold() {
     setHolding(true);
     setHoldError(null);
@@ -103,12 +93,12 @@ export default function MatchSearchBox({ defaultQuery, match, autoSearchKey, onC
                 On hold ({match.hold_id})
               </span>
             ) : (
-              availabilityStatus && availabilityStatus !== "AVAILABLE" && onPlaceHold && (
+              onPlaceHold && (
                 <button
                   onClick={handlePlaceHold}
                   disabled={holding}
                   title="Places a real hold on your Fulton County library account"
-                  className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50 whitespace-nowrap"
+                  className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded border border-[var(--available)] text-[var(--available)] hover:bg-[var(--available)] hover:text-[var(--available-contrast)] disabled:opacity-50 whitespace-nowrap"
                 >
                   {holding ? "Placing hold…" : "Place a hold"}
                 </button>
@@ -160,7 +150,7 @@ export default function MatchSearchBox({ defaultQuery, match, autoSearchKey, onC
         <button
           onClick={() => runSearch(false)}
           disabled={loading}
-          className="shrink-0 text-sm font-semibold px-3 py-1.5 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] disabled:opacity-50"
+          className="shrink-0 text-sm font-semibold px-3 py-1.5 rounded border border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)] hover:text-[var(--primary-contrast)] disabled:opacity-50"
         >
           Search
         </button>

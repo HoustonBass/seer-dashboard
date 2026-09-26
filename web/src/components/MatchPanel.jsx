@@ -86,9 +86,11 @@ export default function MatchPanel({ request, onMatchChange, onAdvance }) {
   }
 
   // Places a REAL hold on the live account — see app/repos/library_repo.py's
-  // place_hold / scripts/discovery/hold.md. Only offered by MatchSearchBox
-  // when the matched item's last-known availability wasn't AVAILABLE and no
-  // hold has been placed yet for this match.
+  // place_hold / scripts/discovery/hold.md. Offered by MatchSearchBox for
+  // any matched item with no hold placed yet, regardless of availability —
+  // "available" means available somewhere system-wide, not at this
+  // account's pickup branch (LIBRARY_HOLD_BRANCH), so a hold is still
+  // needed to route a copy there.
   async function handlePlaceHold(seasonNumber, match) {
     const result = await placeHold({ request_id: request.id, season_number: seasonNumber, bib_id: match.bib_id });
     onMatchChange(request.id, seasonNumber, { ...match, hold_id: result.hold_id });
