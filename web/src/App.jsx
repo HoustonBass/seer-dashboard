@@ -239,17 +239,25 @@ export default function App() {
           seerr-dashboard
         </h1>
 
-        <select
-          className="ml-4 text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] px-2 py-1"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          {FILTER_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <div className="ml-4 flex items-center gap-1.5">
+          <span
+            className="mono w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold text-[var(--text-muted)] bg-[var(--unmatched-bg)]"
+            title={`${displayedRequests?.length ?? 0} requests match this filter`}
+          >
+            {displayedRequests?.length ?? "–"}
+          </span>
+          <select
+            className="text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] px-2 py-1"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          >
+            {FILTER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="relative ml-2">
           <svg
