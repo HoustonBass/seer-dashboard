@@ -53,7 +53,7 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
           <div
             key={r.id}
             onClick={() => onSelect(r)}
-            className={`flex items-center gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
+            className={`flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
               selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
             }`}
           >
@@ -70,36 +70,44 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
               </div>
             </div>
 
-            <span
-              className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
-                available
-                  ? "text-[var(--available)] bg-[var(--available-bg)]"
-                  : "text-[var(--pending)] bg-[var(--pending-bg)]"
-              }`}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              {mediaStatusLabel(Number(r.media_status))}
-            </span>
+            {/* On mobile these two pills stack full-width below the title
+                instead of squeezing into the same row as it — three
+                whitespace-nowrap chips fighting for ~375px made long match
+                titles/subtitles unreadable. lg:contents removes this wrapper
+                from the layout at desktop size so the row is exactly the
+                same flex-row of 3 items it always was — no desktop change. */}
+            <div className="flex flex-wrap gap-1.5 lg:contents">
+              <span
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
+                  available
+                    ? "text-[var(--available)] bg-[var(--available-bg)]"
+                    : "text-[var(--pending)] bg-[var(--pending-bg)]"
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                {mediaStatusLabel(Number(r.media_status))}
+              </span>
 
-            {r.type === "tv" && r.seasons?.length > 0 ? (
-              <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
-            ) : r.match?.status === "matched" ? (
-              <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                {r.match.bib_title}
-                {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
-              </span>
-            ) : r.match?.status === "unavailable" ? (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                not in library
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                unmatched
-              </span>
-            )}
+              {r.type === "tv" && r.seasons?.length > 0 ? (
+                <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
+              ) : r.match?.status === "matched" ? (
+                <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-normal lg:whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                  {r.match.bib_title}
+                  {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
+                </span>
+              ) : r.match?.status === "unavailable" ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  not in library
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  unmatched
+                </span>
+              )}
+            </div>
           </div>
         );
       })}
