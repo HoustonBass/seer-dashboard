@@ -86,6 +86,23 @@ when this work starts — don't fire speculative POST/DELETE requests at
 `.../holds` against the live account outside of that session. Read-only
 GETs (e.g. checking `/header/state` for account info) are fine.
 
+### `data/` is a git submodule, not a gitignored scratch dir
+
+`data/` (the 6 `*_cache.db`/`matches.db` SQLite files) is a submodule pointing
+at this same repo's own `dbs` branch. That branch is deliberately kept to a
+single, force-pushed commit — it's a data drop, not history worth preserving;
+only add a second commit if a real point-in-time backup is actually wanted.
+To refresh it: take a consistent snapshot with `sqlite3 <file> ".backup ..."`
+(don't just `cp` a live db a running process is writing to), commit inside
+the submodule checkout, `git commit --amend`, force-push `dbs`, then `git add
+data` in the main repo to bump the submodule pointer. The containerized
+deployment mounts this submodule checkout at `/data` with `DATA_DIR=/data`
+(separately from `/config`'s `CONFIG_DIR`) — see the Dockerfile and
+`app/lib/env.py`'s `data_dir()`. Local dev needs no extra env vars since
+`data/` at repo root is already `data_dir()`'s no-CONFIG_DIR/no-DATA_DIR
+default. `library_auth_cache` and `backend.log` are not part of this
+submodule — they stay plain gitignored local-dev scratch files.
+
 ## Mock frontend (`app/` + `web/`)
 
 Purpose: test matching strategies (the "which library item is this Overseerr
