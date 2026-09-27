@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { mediaStatusLabel, requestStatusLabel } from "../lib/labels";
 
 // One row per Overseerr request, styled as a scannable list (not a dense
@@ -5,7 +6,13 @@ import { mediaStatusLabel, requestStatusLabel } from "../lib/labels";
 // chip, mirroring how a call number reads on a DVD case. Deliberately
 // dumb/presentational — all data fetching lives in App.jsx — so this maps
 // cleanly onto a future plugin UI component that just receives props.
-export default function RequestList({ requests, selectedId, onSelect, searchQuery = "", onClearSearch }) {
+//
+// `renderAfterRow(request)` is optional — App.jsx uses it on mobile (see
+// useIsMobile) to embed the match panel directly under the selected row
+// instead of in a separate side panel, since there's no "side" to put it in
+// on a single-column layout. Desktop passes nothing, so this component's
+// own behavior doesn't change there.
+export default function RequestList({ requests, selectedId, onSelect, searchQuery = "", onClearSearch, renderAfterRow }) {
   const isSearching = searchQuery.trim().length > 0;
 
   if (requests === null) {
@@ -50,65 +57,67 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
       {requests.map((r) => {
         const available = Number(r.media_status) === 5;
         return (
-          <div
-            key={r.id}
-            onClick={() => onSelect(r)}
-            className={`flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
-              selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
-            }`}
-          >
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm truncate">
-                {r.title}
-                {r.tmdb?.release_date && (
-                  <span className="text-[var(--text-faint)] font-normal"> ({r.tmdb.release_date.slice(0, 4)})</span>
+          <Fragment key={r.id}>
+            <div
+              onClick={() => onSelect(r)}
+              className={`flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
+                selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-sm truncate">
+                  {r.title}
+                  {r.tmdb?.release_date && (
+                    <span className="text-[var(--text-faint)] font-normal"> ({r.tmdb.release_date.slice(0, 4)})</span>
+                  )}
+                </div>
+                <div className="text-xs text-[var(--text-faint)] mt-0.5">
+                  {r.type} · {requestStatusLabel(Number(r.request_status))} · requested by {r.requested_by}
+                  {r.tmdb?.director && <> · {r.tmdb.director}</>}
+                </div>
+              </div>
+
+              {/* On mobile these two pills stack full-width below the title
+                  instead of squeezing into the same row as it — three
+                  whitespace-nowrap chips fighting for ~375px made long match
+                  titles/subtitles unreadable. lg:contents removes this wrapper
+                  from the layout at desktop size so the row is exactly the
+                  same flex-row of 3 items it always was — no desktop change. */}
+              <div className="flex flex-wrap gap-1.5 lg:contents">
+                <span
+                  className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
+                    available
+                      ? "text-[var(--available)] bg-[var(--available-bg)]"
+                      : "text-[var(--pending)] bg-[var(--pending-bg)]"
+                  }`}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {mediaStatusLabel(Number(r.media_status))}
+                </span>
+
+                {r.type === "tv" && r.seasons?.length > 0 ? (
+                  <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
+                ) : r.match?.status === "matched" ? (
+                  <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-normal lg:whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                    {r.match.bib_title}
+                    {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
+                  </span>
+                ) : r.match?.status === "unavailable" ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                    not in library
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
+                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                    unmatched
+                  </span>
                 )}
               </div>
-              <div className="text-xs text-[var(--text-faint)] mt-0.5">
-                {r.type} · {requestStatusLabel(Number(r.request_status))} · requested by {r.requested_by}
-                {r.tmdb?.director && <> · {r.tmdb.director}</>}
-              </div>
             </div>
-
-            {/* On mobile these two pills stack full-width below the title
-                instead of squeezing into the same row as it — three
-                whitespace-nowrap chips fighting for ~375px made long match
-                titles/subtitles unreadable. lg:contents removes this wrapper
-                from the layout at desktop size so the row is exactly the
-                same flex-row of 3 items it always was — no desktop change. */}
-            <div className="flex flex-wrap gap-1.5 lg:contents">
-              <span
-                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
-                  available
-                    ? "text-[var(--available)] bg-[var(--available-bg)]"
-                    : "text-[var(--pending)] bg-[var(--pending-bg)]"
-                }`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                {mediaStatusLabel(Number(r.media_status))}
-              </span>
-
-              {r.type === "tv" && r.seasons?.length > 0 ? (
-                <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
-              ) : r.match?.status === "matched" ? (
-                <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-normal lg:whitespace-nowrap">
-                  <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                  {r.match.bib_title}
-                  {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
-                </span>
-              ) : r.match?.status === "unavailable" ? (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
-                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                  not in library
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
-                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                  unmatched
-                </span>
-              )}
-            </div>
-          </div>
+            {selectedId === r.id && renderAfterRow?.(r)}
+          </Fragment>
         );
       })}
     </div>

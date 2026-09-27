@@ -1,136 +1,89 @@
-import { useEffect, useRef, useState } from "react";
-import DvdActivityBadge from "./components/DvdActivityBadge";
-import FailedQuickAddsButton from "./components/FailedQuickAddsButton";
+import { useState } from "react";
+import AppHeader from "./components/layout/AppHeader";
 import MatchPanel from "./components/MatchPanel";
 import QuickAddPanel from "./components/QuickAddPanel";
 import RequestList from "./components/RequestList";
-import SettingsPopover from "./components/SettingsPopover";
 import { QuickAddProvider } from "./QuickAddContext";
-import { DEFAULT_FORMAT } from "./components/MatchSearchBox";
-import { searchLibrary, streamRequests } from "./lib/api";
-import { FILTER_OPTIONS, getDefaultFilter } from "./lib/defaultFilter";
-import { seasonNumberWord } from "./lib/labels";
+import useIsMobile from "./hooks/useIsMobile";
+import useRefreshSignal from "./hooks/useRefreshSignal";
+import useRequests from "./hooks/useRequests";
+import useRequestSelection from "./hooks/useRequestSelection";
+import usePrefetchNextSearch from "./hooks/usePrefetchNextSearch";
+import { getDefaultFilter, setDefaultFilter } from "./lib/defaultFilter";
+import { filterByStatus, searchRequests } from "./lib/requestFilters";
 import { useThemeMode } from "./theme/ThemeModeContext";
-
-// "unmatched"/"matched"/"matched_waiting" aren't Overseerr request statuses —
-// Overseerr has no concept of our library match. They're client-side filters
-// over whatever got loaded, not a value passed to /api/requests?filter=;
-// anything not in this set falls back to "all" for the actual backend query.
-const OVERSEERR_FILTERS = new Set(["all", "available", "processing"]);
-
-// Already-available requests don't need a library match — there's nothing
-// left to hunt down, Overseerr already has it covered. For TV, "unmatched"
-// means at least one requested season still has no decision at all (neither
-// matched nor confirmed unavailable). Shared between the "unmatched" filter
-// and Option/Alt+click's "advance to the next unmatched" behavior below, so
-// the two can't drift apart on what "unmatched" means.
-function isUnmatchedRequest(r) {
-  if (Number(r.media_status) === 5) return false;
-  if (r.type === "tv" && r.seasons?.length > 0) {
-    return r.seasons.some((s) => !r.season_matches?.[s]);
-  }
-  return !r.match;
-}
-
-// Every requested season/the whole item has a library match — shared by the
-// "matched" filter and "matched, waiting" below so they can't drift apart on
-// what "matched" means.
-function isFullyMatchedRequest(r) {
-  if (r.type === "tv" && r.seasons?.length > 0) {
-    return r.seasons.length > 0 && r.seasons.every((s) => r.season_matches?.[s]?.status === "matched");
-  }
-  return r.match?.status === "matched";
-}
 
 // Mock FE — for testing matching strategies against the real Overseerr +
 // library APIs before this gets rebuilt as a Jellyfin plugin. Two-pane
-// workspace layout: request queue on the left, the active request's match
-// panel open on the right — approved direction, see the UI-directions
-// artifact this was picked from. Structure (RequestList + MatchPanel, each
-// owning their own concern) is meant to be portable to the eventual plugin.
+// workspace layout at md+ (tablet/desktop) — request queue on the left, the
+// active request's match panel sticky on the right — approved direction,
+// see the UI-directions artifact this was picked from. Below md there's no
+// room for a second column, so the match panel renders inline directly
+// under the selected row instead (see useIsMobile/renderInlineMatchPanel).
+// Structure (RequestList + MatchPanel, each owning their own concern) is
+// meant to be portable to the eventual plugin either way.
+//
+// This is the composition root — same role as app/main.py on the backend:
+// wire hooks (state/orchestration, see hooks/) into layout/view components
+// (see components/layout/ and components/*), and stay small. Business logic
+// lives in hooks/ and lib/, not here; this file should only ever grow by
+// wiring in another hook or another prop, not by growing its own logic.
 export default function App() {
-  const [requests, setRequests] = useState(null);
-  const [requestsSource, setRequestsSource] = useState(null);
   const [filter, setFilter] = useState(getDefaultFilter);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(null);
+  // The active filter itself IS the persisted default — whatever you last
+  // picked in the header dropdown is what loads next time, no separate
+  // "remember to save this as default" step in Settings.
+  function handleFilterChange(value) {
+    setFilter(value);
+    setDefaultFilter(value);
+  }
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [quickAddResult, setQuickAddResult] = useState(null);
-  const [dvdCountRefreshKey, setDvdCountRefreshKey] = useState(0);
-  const [failedQuickAddsRefreshKey, setFailedQuickAddsRefreshKey] = useState(0);
+  const [dvdCountRefreshKey, bumpDvdCount] = useRefreshSignal();
+  const [failedQuickAddsRefreshKey, bumpFailedQuickAdds] = useRefreshSignal();
   const { mode, toggle: toggleTheme } = useThemeMode();
-  const loadGeneration = useRef(0);
-  const loadAbortController = useRef(null);
-  const prefetchedForRef = useRef(null);
+  const isMobile = useIsMobile();
 
+  const { selected, setSelected, findNextUnmatched } = useRequestSelection();
+
+  const { requests, setRequests, requestsSource, load } = useRequests(filter, {
+    onStreamSettled: (seenIds) => {
+      if (selected && !seenIds.has(selected.id)) setSelected(null);
+    },
+  });
+
+  // Clicking the already-selected row again deselects it — most useful on
+  // mobile, where the match panel expands inline under the row (see
+  // renderInlineMatchPanel) and needs a way to collapse back without
+  // picking a different request; harmless on desktop too, where it just
+  // reverts the side panel to its "select a request" placeholder.
+  //
   // The quick-add search only makes sense in the context of whatever request
   // you were matching when you spotted it — switching to a different request
-  // closes it rather than leaving a stale third column open.
+  // (or deselecting) closes it rather than leaving a stale third column open.
   function selectRequest(request) {
-    setSelected(request);
+    setSelected((prev) => (prev?.id === request.id ? null : request));
     setQuickAddResult(null);
   }
 
-  async function load(refresh = false) {
-    // Abort whatever load is still in flight before starting a new one —
-    // otherwise a still-running /api/requests stream (each one re-resolves
-    // title/TMDB for every request, ~250 of them) keeps costing real backend
-    // work even after its result is discarded client-side. This also means
-    // React 18 StrictMode's dev-only double-invoke of this effect (mount,
-    // cleanup, remount — see main.jsx) cancels the first mount's request via
-    // the effect's cleanup below instead of both actually hitting the
-    // backend, which is what made filter=all appear to fire twice on load.
-    loadAbortController.current?.abort();
-    const controller = new AbortController();
-    loadAbortController.current = controller;
+  const displayedRequests = filterByStatus(requests, filter);
+  const searchedRequests = searchRequests(displayedRequests, search);
 
-    // Rows arrive one at a time (see streamRequests) — if the filter changes
-    // (or Refresh is clicked) mid-stream, this guard drops the stale
-    // stream's late-arriving rows instead of mixing them into the new one.
-    // Kept alongside the abort above as a belt-and-suspenders guard for any
-    // row already buffered client-side by the time an abort lands.
-    const generation = ++loadGeneration.current;
-    setRequests(null);
-    setRequestsSource(null);
-    const seenIds = new Set();
-    const backendFilter = OVERSEERR_FILTERS.has(filter) ? filter : "all";
-
-    try {
-      await streamRequests(backendFilter, { refresh, signal: controller.signal }, ({ row, source }) => {
-        if (loadGeneration.current !== generation) return;
-        seenIds.add(row.id);
-        setRequestsSource(source);
-        // Merge this one row into whatever `requests` currently holds, rather
-        // than replacing the whole array from a private closure array — a
-        // closure-tracked array has no idea about matches chosen mid-stream
-        // via updateLocalMatch, so replacing wholesale on every incoming row
-        // used to stomp that optimistic update back to unmatched the next
-        // time any other row (anywhere in the ~250) finished resolving.
-        setRequests((prev) => {
-          const next = prev ? prev.filter((r) => r.id !== row.id) : [];
-          next.push(row);
-          // Rows resolve in completion order, not Overseerr's "most recently
-          // added" order — re-sort by id (descending) on every update so the
-          // list settles into the right place as each one streams in, instead
-          // of looking shuffled by network timing.
-          next.sort((a, b) => b.id - a.id);
-          return next;
-        });
-      });
-    } catch (e) {
-      if (e.name === "AbortError") return; // superseded by a newer load — not a real failure
-      throw e;
-    }
-
-    if (loadGeneration.current === generation && selected && !seenIds.has(selected.id)) {
-      setSelected(null);
-    }
+  // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
+  // the match and jumps straight to the next request still needing one. No-op
+  // if nothing after the current selection still needs a match.
+  function advanceToNextUnmatched() {
+    const next = findNextUnmatched(searchedRequests);
+    if (next) selectRequest(next);
   }
 
-  useEffect(() => {
-    load();
-    return () => loadAbortController.current?.abort();
-  }, [filter]);
+  usePrefetchNextSearch(selected, searchedRequests, findNextUnmatched);
+
+  function handleRefresh() {
+    load(true);
+    bumpDvdCount();
+  }
 
   // Choosing/clearing a match updates just that one row in place — no
   // re-streaming the whole request list (that used to reset scroll position
@@ -154,190 +107,57 @@ export default function App() {
     setSelected((prev) => (prev && prev.id === requestId ? patch(prev) : prev));
   }
 
-  const displayedRequests =
-    requests === null
-      ? null
-      : filter === "unmatched"
-        ? requests.filter(isUnmatchedRequest)
-        : filter === "matched"
-          ? requests.filter(isFullyMatchedRequest)
-          : filter === "matched_waiting"
-            ? requests.filter((r) => isFullyMatchedRequest(r) && Number(r.media_status) !== 5)
-            : filter === "unavailable"
-              ? requests.filter((r) =>
-                  r.type === "tv" && r.seasons?.length > 0
-                    ? r.seasons.some((s) => r.season_matches?.[s]?.status === "unavailable")
-                    : r.match?.status === "unavailable",
-                )
-              : requests;
-
-  // Client-side, over whatever the status filter already produced — same
-  // pattern as that filter, no backend round-trip. Matches title, requester,
-  // and director (not just title) since all three are already on each row;
-  // RequestList's search hint strip surfaces that scope so a match on a name
-  // that isn't visibly "in" the title doesn't look like a bug.
-  const searchNorm = search.trim().toLowerCase();
-  const searchedRequests =
-    displayedRequests === null || !searchNorm
-      ? displayedRequests
-      : displayedRequests.filter((r) =>
-          [r.title, r.requested_by, r.tmdb?.director].some((field) => field?.toLowerCase().includes(searchNorm)),
-        );
-
-  // Shared by advanceToNextUnmatched and the prefetch effect below — "next"
-  // means the next row below the current selection in whatever order the
-  // left pane is currently showing (respects the active filter/search), not
-  // the full unfiltered request list.
-  function findNextUnmatched() {
-    if (!selected || !searchedRequests) return null;
-    const idx = searchedRequests.findIndex((r) => r.id === selected.id);
-    if (idx === -1) return null;
-    return searchedRequests.slice(idx + 1).find(isUnmatchedRequest) ?? null;
+  // Mobile (below the md breakpoint the grid switches at) has no "side" to
+  // put the match panel in — there's no room for a second column at all, so
+  // it renders directly under the selected row instead (see RequestList's
+  // renderAfterRow) rather than in a separate, easy-to-scroll-past section
+  // below the whole (potentially long) list.
+  function renderInlineMatchPanel(request) {
+    return (
+      <div className="bg-[var(--surface)] p-5 border-t-2 border-[var(--rule-strong)]">
+        <MatchPanel request={request} onMatchChange={updateLocalMatch} onAdvance={advanceToNextUnmatched} />
+        {quickAddResult && (
+          <div className="mt-4 pt-4 border-t border-[var(--rule)]">
+            <QuickAddPanel
+              libraryResult={quickAddResult}
+              onClose={() => setQuickAddResult(null)}
+              onAddFailed={bumpFailedQuickAdds}
+            />
+          </div>
+        )}
+      </div>
+    );
   }
 
-  // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
-  // the match and jumps straight to the next request still needing one. No-op
-  // if nothing after the current selection still needs a match.
-  function advanceToNextUnmatched() {
-    const next = findNextUnmatched();
-    if (next) selectRequest(next);
-  }
-
-  // Mirrors the query MatchSearchBox's autoSearchKey effect builds for a
-  // request (see MatchPanel.jsx) — must stay in sync with that or the
-  // prefetch below warms a cache key the real search never asks for.
-  function defaultSearchQueryFor(request) {
-    if (request.type === "tv" && request.seasons?.length > 0) {
-      const season = [...request.seasons].sort((a, b) => a - b).find((s) => !request.season_matches?.[s]);
-      if (season == null) return null;
-      return `${request.title} season ${seasonNumberWord(season)}`;
-    }
-    return request.title;
-  }
-
-  // Selecting a request already triggers its own auto-search (MatchSearchBox's
-  // autoSearchKey effect) — this warms the *next* unmatched request's search a
-  // beat later, so LibraryRepo's cache is already populated by the time you
-  // actually get there (Option/Alt+click or a manual click). Delayed instead
-  // of immediate so it doesn't compete with the just-selected request's own
-  // (higher-priority) search for the same backend. Keyed by
-  // (selected, next, query) via a ref rather than firing straight from a
-  // dependency array — searchedRequests is a fresh array reference on every
-  // render, so without the ref this would refire (though harmlessly, since a
-  // cache hit is cheap) on any unrelated re-render, not just an actual change.
-  useEffect(() => {
-    const next = findNextUnmatched();
-    if (!next) return;
-    const query = defaultSearchQueryFor(next);
-    if (!query) return;
-    const key = `${selected?.id}:${next.id}:${query}`;
-    if (prefetchedForRef.current === key) return;
-    const timer = setTimeout(() => {
-      prefetchedForRef.current = key;
-      searchLibrary(query, DEFAULT_FORMAT).catch(() => {});
-    }, 300);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, searchedRequests]);
-
+  // overflow-x-hidden deliberately NOT set on the root div below — it lives
+  // on body (index.css) instead. Setting it here would make this div its
+  // own scroll/clipping container, which breaks position:sticky on the
+  // match panel further down (sticky needs to reference the real document
+  // scroller; body/html overflow gets applied to the viewport itself rather
+  // than creating a nested one, so it doesn't have this problem).
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
-      <header className="flex items-center gap-3 px-6 py-3 border-b border-[var(--rule)] bg-[var(--surface)]">
-        <h1 className="font-serif text-lg tracking-tight" style={{ fontFamily: "Georgia, 'Iowan Old Style', serif" }}>
-          seerr-dashboard
-        </h1>
-
-        <div className="ml-4 flex items-center gap-1.5">
-          <span
-            className="mono w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold text-[var(--text-muted)] bg-[var(--unmatched-bg)]"
-            title={`${displayedRequests?.length ?? 0} requests match this filter`}
-          >
-            {displayedRequests?.length ?? "–"}
-          </span>
-          <select
-            className="text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] px-2 py-1"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          >
-            {FILTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="relative ml-2">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-faint)] pointer-events-none"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <path d="M21 21l-4.3-4.3" />
-          </svg>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search title, requester, or director…"
-            className="w-52 rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] pl-7 pr-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
-          />
-        </div>
-
-        {requestsSource && <span className="text-xs text-[var(--text-faint)]">source: {requestsSource}</span>}
-
-        <DvdActivityBadge refreshKey={dvdCountRefreshKey} />
-        <FailedQuickAddsButton refreshKey={failedQuickAddsRefreshKey} />
-
-        <div className="ml-auto flex items-center gap-1">
-          <button
-            onClick={() => {
-              load(true);
-              setDvdCountRefreshKey((k) => k + 1);
-            }}
-            className="px-2.5 py-1.5 text-xs rounded border border-[var(--rule-strong)] hover:bg-[var(--surface-raised)]"
-            title="Bypass cache and re-fetch live from Overseerr"
-          >
-            Refresh
-          </button>
-          <button
-            onClick={toggleTheme}
-            aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            className="w-8 h-8 flex items-center justify-center rounded hover:bg-[var(--surface-raised)] text-base"
-          >
-            {mode === "dark" ? "☾" : "☀"}
-          </button>
-          <div className="relative">
-            <button
-              onClick={() => setSettingsOpen((o) => !o)}
-              aria-label="Settings"
-              aria-expanded={settingsOpen}
-              title="Settings"
-              className="w-8 h-8 flex items-center justify-center rounded hover:bg-[var(--surface-raised)] text-base"
-            >
-              ⚙
-            </button>
-            {settingsOpen && (
-              <SettingsPopover
-                onClose={() => setSettingsOpen(false)}
-                onRefresh={() => {
-                  load(true);
-                  setDvdCountRefreshKey((k) => k + 1);
-                }}
-              />
-            )}
-          </div>
-        </div>
-      </header>
+      <AppHeader
+        filter={filter}
+        onFilterChange={handleFilterChange}
+        requestCount={displayedRequests?.length}
+        search={search}
+        onSearchChange={setSearch}
+        requestsSource={requestsSource}
+        dvdCountRefreshKey={dvdCountRefreshKey}
+        failedQuickAddsRefreshKey={failedQuickAddsRefreshKey}
+        onRefresh={handleRefresh}
+        mode={mode}
+        onToggleTheme={toggleTheme}
+        settingsOpen={settingsOpen}
+        onToggleSettings={() => setSettingsOpen((o) => !o)}
+        onCloseSettings={() => setSettingsOpen(false)}
+      />
 
       <QuickAddProvider value={setQuickAddResult}>
         <div
           className={`grid grid-cols-1 gap-px bg-[var(--rule)] border-b border-[var(--rule)] ${
-            quickAddResult ? "lg:grid-cols-[1.1fr_1fr_1fr]" : "lg:grid-cols-[1.1fr_1fr]"
+            quickAddResult ? "md:grid-cols-[1.1fr_1fr_1fr]" : "md:grid-cols-[1.1fr_1fr]"
           }`}
         >
           <div className="bg-[var(--surface)]">
@@ -347,23 +167,28 @@ export default function App() {
               onSelect={selectRequest}
               searchQuery={search}
               onClearSearch={() => setSearch("")}
+              renderAfterRow={isMobile ? renderInlineMatchPanel : undefined}
             />
           </div>
-          <div className="bg-[var(--surface)] p-5 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto">
-            {selected ? (
-              <MatchPanel request={selected} onMatchChange={updateLocalMatch} onAdvance={advanceToNextUnmatched} />
-            ) : (
-              <p className="text-sm text-[var(--text-faint)]">Select a request to search the library.</p>
-            )}
-          </div>
-          {quickAddResult && (
-            <div className="bg-[var(--surface)] p-5 lg:sticky lg:top-0 lg:self-start lg:max-h-screen lg:overflow-y-auto">
-              <QuickAddPanel
-                libraryResult={quickAddResult}
-                onClose={() => setQuickAddResult(null)}
-                onAddFailed={() => setFailedQuickAddsRefreshKey((k) => k + 1)}
-              />
-            </div>
+          {!isMobile && (
+            <>
+              <div className="bg-[var(--surface)] p-5 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto">
+                {selected ? (
+                  <MatchPanel request={selected} onMatchChange={updateLocalMatch} onAdvance={advanceToNextUnmatched} />
+                ) : (
+                  <p className="text-sm text-[var(--text-faint)]">Select a request to search the library.</p>
+                )}
+              </div>
+              {quickAddResult && (
+                <div className="bg-[var(--surface)] p-5 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto">
+                  <QuickAddPanel
+                    libraryResult={quickAddResult}
+                    onClose={() => setQuickAddResult(null)}
+                    onAddFailed={bumpFailedQuickAdds}
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       </QuickAddProvider>

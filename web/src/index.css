@@ -106,6 +106,7 @@
 body {
   background: var(--bg);
   color: var(--text);
+  overflow-x: hidden;
 }
 
 .mono {

@@ -87,7 +87,7 @@ export default function FailedQuickAddsButton({ refreshKey }) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+8px)] z-20 w-96 rounded-md border border-[var(--rule)] bg-[var(--surface-raised)] p-4 shadow-lg flex flex-col gap-3"
+          className="absolute right-0 top-[calc(100%+8px)] z-20 w-96 max-w-[calc(100vw-2rem)] rounded-md border border-[var(--rule)] bg-[var(--surface-raised)] p-4 shadow-lg flex flex-col gap-3"
         >
           <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
             Failed quick-adds
