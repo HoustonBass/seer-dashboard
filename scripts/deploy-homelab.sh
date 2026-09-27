@@ -1,7 +1,10 @@
 #!/usr/bin/env sh
 # Pulls the latest main onto the homelab's clone, rebuilds the image, and
 # restarts the container via its compose file — see CLAUDE.md/the
-# "project-seerr-dashboard-deployment" memory for the full layout.
+# "project-seerr-dashboard-deployment" memory for the full layout. Skips the
+# rebuild/restart entirely if the pull brought in nothing new (compares
+# HEAD before/after) — no point recreating a container, however briefly,
+# for a no-op deploy.
 #
 # Requires a `homelab` entry in ~/.ssh/config (key-only auth — password auth
 # is disabled on that box) pointing at 192.168.1.93. Run from anywhere; this
@@ -19,7 +22,14 @@ set -eu
 ssh homelab '
   set -eu
   cd ~/repos/seerr-dashboard
+  before="$(git rev-parse HEAD)"
   git pull origin main
+  after="$(git rev-parse HEAD)"
+  if [ "$before" = "$after" ]; then
+    echo "Already up to date at $before — skipping rebuild/restart."
+    exit 0
+  fi
+  echo "Updated $before -> $after — rebuilding and restarting."
   cd ~/compose
   docker compose -f seerr-dashboard-compose.yaml up -d --build
 '
