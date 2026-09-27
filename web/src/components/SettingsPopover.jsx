@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchSettings, setSetting } from "../lib/api";
 import { getDefaultBranch, setDefaultBranch } from "../lib/defaultBranch";
-import { FILTER_OPTIONS, getDefaultFilter, setDefaultFilter } from "../lib/defaultFilter";
 import Toggle from "./Toggle";
 
 // Feature-switch panel: lists everything in app/lib/feature_switch.py's
@@ -9,15 +8,16 @@ import Toggle from "./Toggle";
 // directly, no restart needed) — see app/controllers/settings_controller.py.
 // A new switch just needs a REGISTRY entry to show up here automatically.
 //
-// Also holds the "default filter"/"default branch" preferences — purely
-// client-side (localStorage, see lib/defaultFilter.js and
-// lib/defaultBranch.js), not backend feature switches, but this popover is
-// where UI preferences live so they're grouped here rather than adding a
-// second settings surface.
+// Also holds the "default branch" preference — purely client-side
+// (localStorage, see lib/defaultBranch.js), not a backend feature switch,
+// but this popover is where UI preferences live so it's grouped here rather
+// than adding a second settings surface. The default *filter* preference
+// (lib/defaultFilter.js) isn't set here — the header's filter dropdown
+// itself persists whatever you pick directly (see App.jsx's
+// handleFilterChange), so there's nothing left for this popover to do.
 export default function SettingsPopover({ onClose, onRefresh }) {
   const [switches, setSwitches] = useState(null);
   const [error, setError] = useState("");
-  const [defaultFilter, setDefaultFilterState] = useState(getDefaultFilter);
   const [defaultBranch, setDefaultBranchState] = useState(getDefaultBranch);
   const ref = useRef(null);
 
@@ -59,32 +59,9 @@ export default function SettingsPopover({ onClose, onRefresh }) {
     <div
       ref={ref}
       role="menu"
-      className="absolute right-0 top-[calc(100%+8px)] z-20 w-80 rounded-md border border-[var(--rule)] bg-[var(--surface-raised)] p-4 shadow-lg flex flex-col gap-3"
+      className="absolute right-0 top-[calc(100%+8px)] z-20 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-[var(--rule)] bg-[var(--surface-raised)] p-4 shadow-lg flex flex-col gap-3"
     >
       <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-1.5">
-          Default filter
-        </div>
-        <select
-          className="w-full text-sm rounded border border-[var(--rule-strong)] bg-[var(--surface)] px-2 py-1.5"
-          value={defaultFilter}
-          onChange={(e) => {
-            setDefaultFilterState(e.target.value);
-            setDefaultFilter(e.target.value);
-          }}
-        >
-          {FILTER_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">
-          Which filter is selected when the page loads. Doesn't change what's showing right now.
-        </p>
-      </div>
-
-      <div className="border-t border-[var(--rule)] pt-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-1.5">
           Default branch
         </div>
