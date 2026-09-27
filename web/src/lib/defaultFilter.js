@@ -8,9 +8,9 @@ const STORAGE_KEY = "seerr-dashboard:default-filter";
 const FALLBACK = "all";
 
 // Must match the <option> values in App.jsx's filter dropdown —
-// "unmatched"/"matched"/"matched_waiting"/"unavailable" are client-side (see
-// App.jsx's OVERSEERR_FILTERS), the rest map straight to Overseerr's own
-// filter values.
+// "unmatched"/"matched"/"matched_waiting"/"matched_branch"/"unavailable" are
+// client-side (see lib/requestFilters.js's OVERSEERR_FILTERS), the rest map
+// straight to Overseerr's own filter values.
 export const FILTER_OPTIONS = [
   { value: "all", label: "all" },
   { value: "available", label: "available" },
@@ -18,6 +18,7 @@ export const FILTER_OPTIONS = [
   { value: "unmatched", label: "unmatched" },
   { value: "matched", label: "matched" },
   { value: "matched_waiting", label: "matched, waiting" },
+  { value: "matched_branch", label: "at my branch" },
   { value: "unavailable", label: "not in library" },
 ];
 

@@ -25,6 +25,7 @@ COPY app/requirements.txt app/requirements.txt
 RUN pip install --no-cache-dir -r app/requirements.txt
 
 COPY app/ app/
+COPY scripts/__init__.py scripts/backfill_branch_cache.py scripts/
 COPY --from=frontend-build /app/web/dist web/dist
 
 # CONFIG_DIR points app/lib/env.py at one mounted folder instead of the

@@ -1,3 +1,4 @@
+import { isDefaultBranch } from "./defaultBranch";
 import { seasonNumberWord } from "./labels";
 
 // "unmatched"/"matched"/"matched_waiting" aren't Overseerr request statuses —
@@ -39,15 +40,32 @@ export function isUnavailableInLibrary(r) {
   return r.match?.status === "unavailable";
 }
 
+// A movie matched to a bib that has a copy at the user's preferred branch
+// (see lib/defaultBranch.js) right now — not just somewhere in the system.
+// `match.branches` is only ever populated for movies (see
+// RequestsService._join_match) and only once cached, either from the match
+// being made after this feature existed (MatchService.save_match/
+// QuickAddService warm it immediately) or a one-time backfill (see
+// scripts/backfill_branch_cache.py) — null/undefined just means "don't know
+// yet", not "not available", so this correctly returns false either way.
+export function isAvailableAtPreferredBranch(match, defaultBranch) {
+  return (match?.branches ?? []).some((b) => isDefaultBranch(b, defaultBranch) && b.status === "AVAILABLE");
+}
+
 // Applies the header dropdown's status filter. `requests` may be null
 // (still loading) — passed through untouched so callers don't need their
 // own null check on top of this one.
-export function filterByStatus(requests, filter) {
+export function filterByStatus(requests, filter, defaultBranch) {
   if (requests === null) return null;
   if (filter === "unmatched") return requests.filter(isUnmatchedRequest);
   if (filter === "matched") return requests.filter(isFullyMatchedRequest);
   if (filter === "matched_waiting") {
     return requests.filter((r) => isFullyMatchedRequest(r) && Number(r.media_status) !== 5);
+  }
+  if (filter === "matched_branch") {
+    return requests.filter(
+      (r) => isFullyMatchedRequest(r) && Number(r.media_status) !== 5 && isAvailableAtPreferredBranch(r.match, defaultBranch),
+    );
   }
   if (filter === "unavailable") return requests.filter(isUnavailableInLibrary);
   return requests;

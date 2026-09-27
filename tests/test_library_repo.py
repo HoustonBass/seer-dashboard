@@ -266,6 +266,76 @@ def test_force_refresh_bypasses_cache(repo):
     assert source == "live"
 
 
+BRANCH_AVAILABILITY_RESPONSE = {
+    "entities": {
+        "bibItems": {
+            "1370130|29|1": {
+                "callNumber": "FLO DVD 791.43 GODZILLA",
+                "branch": {"name": "Alpharetta Branch", "code": "ALPH"},
+                "availability": {"status": "AVAILABLE"},
+            },
+            "1370130|39|1": {
+                "callNumber": "FLO DVD 791.43 GODZILLA",
+                "branch": {"name": "Milton Branch", "code": "MILTON"},
+                "availability": {"status": "CHECKED_OUT"},
+            },
+        }
+    }
+}
+
+
+def test_get_bib_branches_extracts_one_entry_per_physical_copy(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(BRANCH_AVAILABILITY_RESPONSE)):
+        branches, source = repo.get_bib_branches("B1")
+
+    assert source == "live"
+    by_code = {b["branch_code"]: b for b in branches}
+    assert by_code["ALPH"] == {
+        "branch_name": "Alpharetta Branch", "branch_code": "ALPH",
+        "status": "AVAILABLE", "call_number": "FLO DVD 791.43 GODZILLA",
+    }
+    assert by_code["MILTON"]["status"] == "CHECKED_OUT"
+
+
+def test_get_bib_branches_caches_second_call_without_more_http_calls(repo):
+    call_count = {"n": 0}
+
+    def counting_get(*args, **kwargs):
+        call_count["n"] += 1
+        return FakeResponse(BRANCH_AVAILABILITY_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", side_effect=counting_get):
+        repo.get_bib_branches("B1")
+        calls_after_first = call_count["n"]
+        branches, source = repo.get_bib_branches("B1")
+
+    assert source == "cache"
+    assert call_count["n"] == calls_after_first
+    assert len(branches) == 2
+
+
+def test_get_cached_branches_returns_none_when_never_fetched(repo):
+    assert repo.get_cached_branches("B1") is None
+
+
+def test_get_cached_branches_never_triggers_a_live_fetch(repo):
+    with patch("app.repos.library_repo.http.get") as mock_get:
+        assert repo.get_cached_branches("B1") is None
+    mock_get.assert_not_called()
+
+
+def test_get_cached_branches_returns_the_list_after_a_prior_live_fetch(repo):
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", return_value=FakeResponse(BRANCH_AVAILABILITY_RESPONSE)):
+        repo.get_bib_branches("B1")
+
+    cached = repo.get_cached_branches("B1")
+    assert len(cached) == 2
+    assert {b["branch_code"] for b in cached} == {"ALPH", "MILTON"}
+
+
 def test_get_bib_edition_extracts_edition_and_publication_note(repo):
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(CATALOG_BIB_RESPONSE)):

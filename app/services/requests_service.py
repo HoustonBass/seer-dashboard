@@ -10,10 +10,11 @@ STREAM_WORKERS = 10
 
 
 class RequestsService:
-    def __init__(self, seerr_repo, match_repo, tmdb_repo):
+    def __init__(self, seerr_repo, match_repo, tmdb_repo, library_repo):
         self.seerr_repo = seerr_repo
         self.match_repo = match_repo
         self.tmdb_repo = tmdb_repo
+        self.library_repo = library_repo
 
     def get_requests(self, filter_key="all", force_refresh=False):
         """Returns (rows, source) — blocks until the whole batch resolves.
@@ -77,16 +78,26 @@ class RequestsService:
         """Merges MatchRepo's per-(request, season) decisions onto a row.
 
         `match` — the whole-item decision (season 0), which is the only kind
-        movies ever have. Always None for TV.
+        movies ever have. Always None for TV. When present and matched to a
+        bib_id, also carries `branches` — cached (never live-fetched here;
+        see LibraryRepo.get_cached_branches) per-branch availability, so the
+        frontend can flag "available at your preferred branch" without an
+        extra round trip. Deliberately movie-only (TV's per-season match
+        shape makes this a bigger feature, out of scope for now) — this
+        falls out for free since only the whole-item match gets enriched,
+        never season_matches.
         `season_matches` — {season_number: match_dict}, keyed by Overseerr's
         real season numbers. Only meaningful for TV (empty dict for movies).
         The frontend picks whichever of the two matters based on `row["type"]`
         rather than this method deciding — see RequestList.jsx/MatchPanel.jsx.
         """
         request_matches = matches.get(row["id"], {})
+        match = request_matches.get(WHOLE_ITEM_SEASON)
+        if match and match.get("bib_id"):
+            match = {**match, "branches": self.library_repo.get_cached_branches(match["bib_id"])}
         return {
             **row,
-            "match": request_matches.get(WHOLE_ITEM_SEASON),
+            "match": match,
             "season_matches": request_matches,
         }
 

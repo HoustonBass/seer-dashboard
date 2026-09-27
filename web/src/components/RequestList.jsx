@@ -1,5 +1,7 @@
 import { Fragment } from "react";
-import { mediaStatusLabel, requestStatusLabel } from "../lib/labels";
+import { getDefaultBranch } from "../lib/defaultBranch";
+import { mediaStatusLabel } from "../lib/labels";
+import { isAvailableAtPreferredBranch } from "../lib/requestFilters";
 
 // One row per Overseerr request, styled as a scannable list (not a dense
 // table) — status as a pill, the library match (if any) as a spine-label
@@ -14,6 +16,7 @@ import { mediaStatusLabel, requestStatusLabel } from "../lib/labels";
 // own behavior doesn't change there.
 export default function RequestList({ requests, selectedId, onSelect, searchQuery = "", onClearSearch, renderAfterRow }) {
   const isSearching = searchQuery.trim().length > 0;
+  const defaultBranch = getDefaultBranch();
 
   if (requests === null) {
     return <p className="p-5 text-sm text-[var(--text-faint)]">Loading requests…</p>;
@@ -72,7 +75,7 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
                   )}
                 </div>
                 <div className="text-xs text-[var(--text-faint)] mt-0.5">
-                  {r.type} · {requestStatusLabel(Number(r.request_status))} · requested by {r.requested_by}
+                  {r.type}
                   {r.tmdb?.director && <> · {r.tmdb.director}</>}
                 </div>
               </div>
@@ -98,11 +101,20 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
                 {r.type === "tv" && r.seasons?.length > 0 ? (
                   <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
                 ) : r.match?.status === "matched" ? (
-                  <span className="mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-normal lg:whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                    {r.match.bib_title}
-                    {r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}
-                  </span>
+                  <>
+                    <span
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap"
+                      title={`${r.match.bib_title}${r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                      Matched
+                    </span>
+                    {isAvailableAtPreferredBranch(r.match, defaultBranch) && (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--primary)] bg-[var(--pending-bg)] whitespace-nowrap">
+                        ★ at your branch
+                      </span>
+                    )}
+                  </>
                 ) : r.match?.status === "unavailable" ? (
                   <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
                     <span className="w-1.5 h-1.5 rounded-full bg-current" />

@@ -14,6 +14,7 @@ import os
 from flask import Flask, send_from_directory
 
 from app.controllers.account_controller import create_account_blueprint
+from app.controllers.backfill_controller import create_backfill_blueprint
 from app.controllers.hold_controller import create_hold_blueprint
 from app.controllers.matches_controller import create_matches_blueprint
 from app.controllers.quick_add_controller import create_quick_add_blueprint
@@ -27,6 +28,7 @@ from app.repos.match_repo import MatchRepo
 from app.repos.seerr_repo import SeerrRepo
 from app.repos.tmdb_repo import TmdbRepo
 from app.services.account_service import AccountService
+from app.services.backfill_service import BackfillService
 from app.services.hold_service import HoldService
 from app.services.match_service import MatchService
 from app.services.quick_add_service import QuickAddService
@@ -48,13 +50,14 @@ def create_app():
     tmdb_repo = TmdbRepo()
     failed_quick_add_repo = FailedQuickAddRepo()
 
-    requests_service = RequestsService(seerr_repo, match_repo, tmdb_repo)
+    requests_service = RequestsService(seerr_repo, match_repo, tmdb_repo, library_repo)
     search_service = SearchService(library_repo, match_repo)
-    match_service = MatchService(match_repo)
+    match_service = MatchService(match_repo, library_repo)
     settings_service = SettingsService()
-    quick_add_service = QuickAddService(tmdb_repo, seerr_repo, match_repo, failed_quick_add_repo)
+    quick_add_service = QuickAddService(tmdb_repo, seerr_repo, match_repo, failed_quick_add_repo, library_repo)
     account_service = AccountService(library_repo)
     hold_service = HoldService(library_repo, match_repo)
+    backfill_service = BackfillService(library_repo, match_repo)
 
     app.register_blueprint(create_requests_blueprint(requests_service))
     app.register_blueprint(create_search_blueprint(search_service))
@@ -63,6 +66,7 @@ def create_app():
     app.register_blueprint(create_quick_add_blueprint(quick_add_service))
     app.register_blueprint(create_account_blueprint(account_service))
     app.register_blueprint(create_hold_blueprint(hold_service))
+    app.register_blueprint(create_backfill_blueprint(backfill_service))
 
     @app.route("/", defaults={"path": ""})
     @app.route("/<path:path>")

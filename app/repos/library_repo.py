@@ -456,6 +456,16 @@ class LibraryRepo:
 
         return self._singleflight.get_or_fetch(f"branches:{bib_id}", get_cached, fetch_and_cache, force_refresh=force_refresh)
 
+    def get_cached_branches(self, bib_id, ttl=DEFAULT_TTL_SECONDS):
+        """Read-only — returns cached branches for bib_id if present and
+        fresh, else None. Never triggers a live fetch (that's
+        get_bib_branches); used by RequestsService to attach branch data to
+        already-matched movies without adding a live call to the read-heavy
+        /api/requests path — the cache gets populated at match time instead
+        (see MatchService.save_match) or by scripts/backfill_branch_cache.py
+        for matches made before that existed."""
+        return self._branches_cache_get(bib_id, ttl)
+
     def _catalog_bib_request(self, bib_id, access_token, session_id):
         return http.get(
             f"{self.gateway_url}/v2/libraries/{self.agency}/catalogBibs/{bib_id}",

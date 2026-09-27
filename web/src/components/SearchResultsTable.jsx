@@ -1,18 +1,8 @@
 import { useState } from "react";
 import HoverZoomImage from "./HoverZoomImage";
 import { useQuickAdd } from "../QuickAddContext";
-import { getDefaultBranch } from "../lib/defaultBranch";
+import { getDefaultBranch, isDefaultBranch } from "../lib/defaultBranch";
 import { fetchBibBranches, fetchBibEdition } from "../lib/api";
-
-// A result's branch might match the saved preference by either its code
-// (what LibraryRepo/BiblioCommons actually key branches by, e.g. "MILTON")
-// or its display name ("Milton Branch") — the settings input doesn't force
-// the user to know which one they typed, so check both, case-insensitively.
-function isDefaultBranch(branch, defaultBranch) {
-  if (!defaultBranch) return false;
-  const needle = defaultBranch.trim().toLowerCase();
-  return branch.branch_code.toLowerCase() === needle || branch.branch_name.toLowerCase().includes(needle);
-}
 
 // Renders the ranked candidates from /api/search (same ranking as
 // scripts/library/search.sh — see scripts/discovery/search.md), as "index

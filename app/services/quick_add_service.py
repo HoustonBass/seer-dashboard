@@ -21,11 +21,12 @@ class QuickAddError(Exception):
 
 
 class QuickAddService:
-    def __init__(self, tmdb_repo, seerr_repo, match_repo, failed_repo):
+    def __init__(self, tmdb_repo, seerr_repo, match_repo, failed_repo, library_repo):
         self.tmdb_repo = tmdb_repo
         self.seerr_repo = seerr_repo
         self.match_repo = match_repo
         self.failed_repo = failed_repo
+        self.library_repo = library_repo
 
     def search_candidates(self, query):
         if not query:
@@ -69,9 +70,10 @@ class QuickAddService:
         # request; matching a specific season happens afterward through the
         # normal season accordion once the new request appears in the list.
         if data.get("bib_id"):
+            season_number = data.get("season_number", WHOLE_ITEM_SEASON)
             self.match_repo.set_match(
                 request_id=created["id"],
-                season_number=data.get("season_number", WHOLE_ITEM_SEASON),
+                season_number=season_number,
                 tmdb_id=tmdb_id,
                 media_type=media_type,
                 seerr_title=data.get("title"),
@@ -79,4 +81,12 @@ class QuickAddService:
                 bib_title=data["bib_title"],
                 bib_subtitle=data.get("bib_subtitle"),
             )
+            # Same reasoning as MatchService.save_match — warm the branch
+            # cache so this shows up with "at my branch" data immediately,
+            # movies only, best-effort.
+            if season_number == WHOLE_ITEM_SEASON:
+                try:
+                    self.library_repo.get_bib_branches(data["bib_id"])
+                except Exception:
+                    pass
         return {"request_id": created["id"]}

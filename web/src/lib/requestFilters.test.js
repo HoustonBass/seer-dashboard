@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultSearchQueryFor,
   filterByStatus,
+  isAvailableAtPreferredBranch,
   isFullyMatchedRequest,
   isUnavailableInLibrary,
   isUnmatchedRequest,
@@ -113,6 +114,48 @@ describe("filterByStatus", () => {
 
   it("filters to unavailable (not in library)", () => {
     expect(filterByStatus(requests, "unavailable").map((r) => r.id)).toEqual([4]);
+  });
+
+  it("filters to matched_branch: matched, waiting, and available at the preferred branch", () => {
+    const withBranches = [
+      movie({
+        id: 1,
+        media_status: 2,
+        match: { status: "matched", branches: [{ branch_code: "MILTON", branch_name: "Milton Branch", status: "AVAILABLE" }] },
+      }), // matched, waiting, at my branch
+      movie({
+        id: 2,
+        media_status: 2,
+        match: { status: "matched", branches: [{ branch_code: "ALPH", branch_name: "Alpharetta Branch", status: "AVAILABLE" }] },
+      }), // matched, waiting, but not at my branch
+      movie({
+        id: 3,
+        media_status: 5, // already AVAILABLE via Overseerr — excluded even though it's at my branch
+        match: { status: "matched", branches: [{ branch_code: "MILTON", branch_name: "Milton Branch", status: "AVAILABLE" }] },
+      }),
+    ];
+    expect(filterByStatus(withBranches, "matched_branch", "MILTON").map((r) => r.id)).toEqual([1]);
+  });
+});
+
+describe("isAvailableAtPreferredBranch", () => {
+  it("is false with no default branch set", () => {
+    const match = { branches: [{ branch_code: "MILTON", branch_name: "Milton Branch", status: "AVAILABLE" }] };
+    expect(isAvailableAtPreferredBranch(match, "")).toBe(false);
+  });
+
+  it("is false when branches haven't been fetched yet (null, not empty)", () => {
+    expect(isAvailableAtPreferredBranch({ branches: null }, "MILTON")).toBe(false);
+  });
+
+  it("is false when the preferred branch has a copy but it's checked out", () => {
+    const match = { branches: [{ branch_code: "MILTON", branch_name: "Milton Branch", status: "CHECKED_OUT" }] };
+    expect(isAvailableAtPreferredBranch(match, "MILTON")).toBe(false);
+  });
+
+  it("is true when the preferred branch (matched by name, case-insensitive) has an available copy", () => {
+    const match = { branches: [{ branch_code: "MILTON", branch_name: "Milton Branch", status: "AVAILABLE" }] };
+    expect(isAvailableAtPreferredBranch(match, "milton")).toBe(true);
   });
 });
 
