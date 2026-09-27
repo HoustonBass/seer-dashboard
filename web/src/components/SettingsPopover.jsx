@@ -20,7 +20,17 @@ export default function SettingsPopover({ onClose, onRefresh }) {
   const [error, setError] = useState("");
   const [defaultBranch, setDefaultBranchState] = useState(getDefaultBranch);
   const [backfillMessage, setBackfillMessage] = useState("");
+  const [expandedSwitches, setExpandedSwitches] = useState(() => new Set());
   const ref = useRef(null);
+
+  function toggleExpanded(key) {
+    setExpandedSwitches((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   useEffect(() => {
     fetchSettings()
@@ -45,19 +55,37 @@ export default function SettingsPopover({ onClose, onRefresh }) {
 
   // Alt/Option+click hard-refreshes every matched movie's cached branches
   // (not just the ones missing entirely) — see BackfillService.start_backfill's
-  // `force` param. Progress shows in BackgroundTasksPanel (App.jsx), not
-  // here — this popover closes long before a ~1/sec, multi-minute run
+  // `force` param. Progress shows as a chip in the header (BackgroundTasksPanel),
+  // not here — this popover closes long before a ~1/sec, multi-minute run
   // finishes, so it can't own that state itself.
   async function handleBackfillClick(e) {
     const force = e.altKey;
     setBackfillMessage("");
     try {
-      const result = await startBranchBackfill(force);
+      const result = await startBranchBackfill({ force });
       if (result.already_running) {
-        setBackfillMessage("Already running — check the progress panel.");
+        setBackfillMessage("Already running — check the header's progress chip.");
       } else {
         setBackfillMessage(force ? "Hard refresh started." : "Backfill started (missing entries only).");
       }
+    } catch (err) {
+      setBackfillMessage(`Failed to start — ${err.message}`);
+    }
+  }
+
+  // Once everything's already cached, a real (non-force) backfill finds
+  // nothing to fetch and finishes in milliseconds — faster than the header
+  // chip's first poll can ever catch it running. This runs a fake ~10s
+  // progression instead, purely to exercise/demo that same chip on demand.
+  // Never deduped against itself (unlike the real backfill) — every click
+  // (Option/Alt or not, doesn't matter, both just click the button) starts
+  // another concurrent test task, so clicking it a couple of times is how
+  // you demo BackgroundTasksPanel tracking more than one task at once.
+  async function handleTestProgressClick() {
+    setBackfillMessage("");
+    try {
+      await startBranchBackfill({ test: true });
+      setBackfillMessage("Test run started — click again for another one alongside it.");
     } catch (err) {
       setBackfillMessage(`Failed to start — ${err.message}`);
     }
@@ -103,13 +131,22 @@ export default function SettingsPopover({ onClose, onRefresh }) {
       </div>
 
       <div className="border-t border-[var(--rule)] pt-3">
-        <button
-          onClick={handleBackfillClick}
-          className="w-full text-sm rounded border border-[var(--rule-strong)] px-2 py-1.5 hover:bg-[var(--surface)]"
-          title="Fills in branch availability for matched movies missing it. Option/Alt+click to hard-refresh every matched movie's branches instead, not just the missing ones."
-        >
-          Refresh branch cache
-        </button>
+        <div className="flex gap-1.5">
+          <button
+            onClick={handleBackfillClick}
+            className="flex-1 text-sm rounded border border-[var(--rule-strong)] px-2 py-1.5 hover:bg-[var(--surface)]"
+            title="Fills in branch availability for matched movies missing it. Option/Alt+click to hard-refresh every matched movie's branches instead, not just the missing ones."
+          >
+            Refresh branch cache
+          </button>
+          <button
+            onClick={handleTestProgressClick}
+            className="shrink-0 text-sm rounded border border-[var(--rule-strong)] px-2 py-1.5 text-[var(--text-muted)] hover:bg-[var(--surface)]"
+            title="Runs a fake ~10s progression to exercise the header's progress chip on demand — real runs usually finish too fast to see once everything's cached. Click more than once to run several concurrently."
+          >
+            Test progress bar
+          </button>
+        </div>
         {backfillMessage && <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">{backfillMessage}</p>}
       </div>
 
@@ -133,18 +170,35 @@ export default function SettingsPopover({ onClose, onRefresh }) {
       {switches === null && !error && <p className="text-sm text-[var(--text-faint)]">Loading…</p>}
       {error && <p className="text-xs text-[var(--accent)]">{error}</p>}
 
-      {switches?.map((s) => (
-        <div key={s.key} className="flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm">{s.label}</span>
-            <Toggle checked={s.enabled} onChange={(next) => handleToggle(s.key, next)} title={s.description} />
+      {switches?.map((s) => {
+        const expanded = expandedSwitches.has(s.key);
+        return (
+          <div key={s.key} className="flex flex-col gap-1">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                onClick={() => toggleExpanded(s.key)}
+                className="flex items-center gap-1 text-sm hover:text-[var(--text)] text-left min-w-0"
+                aria-expanded={expanded}
+                title={expanded ? "Hide description" : "Show description"}
+              >
+                <span
+                  className={`mono text-[var(--text-faint)] text-[10px] transition-transform shrink-0 ${expanded ? "rotate-90" : ""}`}
+                >
+                  ▸
+                </span>
+                <span className="truncate">{s.label}</span>
+              </button>
+              <Toggle checked={s.enabled} onChange={(next) => handleToggle(s.key, next)} title={s.description} />
+            </div>
+            {expanded && (
+              <p className="text-[11px] leading-snug text-[var(--text-faint)] pl-4">
+                {s.description}
+                {s.enabled ? ` (${s.seconds}s)` : ""}
+              </p>
+            )}
           </div>
-          <p className="text-[11px] leading-snug text-[var(--text-faint)]">
-            {s.description}
-            {s.enabled ? ` (${s.seconds}s)` : ""}
-          </p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

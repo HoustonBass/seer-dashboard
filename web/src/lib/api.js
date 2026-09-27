@@ -190,18 +190,29 @@ export async function setSetting(key, enabled, seconds) {
 
 // Kicks off the branch-availability backfill (see
 // app/services/backfill_service.py) — fills in missing entries only unless
-// force is true (re-fetches every matched movie, a "hard refresh"). Returns
-// {started} or, if one's already running, a 409 with {started: false,
-// already_running: true} — not thrown as an error, since that's an
-// expected/normal outcome the caller should handle, not a failure.
-export async function startBranchBackfill(force = false) {
-  const res = await fetch(`/api/branches/backfill${force ? "?force=1" : ""}`, { method: "POST" });
+// force is true (re-fetches every matched movie, a "hard refresh"). `test`
+// starts a fake ~10s progression instead (BackfillService.start_test_task)
+// — useful since once everything's already cached, a real non-force run
+// finishes faster than the progress chip could ever appear. Unlike the
+// real backfill (one at a time — a 409 with {started: false,
+// already_running: true} if one's already running, not thrown as an
+// error since that's an expected/normal outcome the caller should
+// handle), test tasks are never deduped — each call starts another one
+// concurrently, to demo BackgroundTasksPanel tracking multiple at once.
+export async function startBranchBackfill({ force = false, test = false } = {}) {
+  const params = new URLSearchParams();
+  if (force) params.set("force", "1");
+  if (test) params.set("test", "1");
+  const qs = params.toString();
+  const res = await fetch(`/api/branches/backfill${qs ? `?${qs}` : ""}`, { method: "POST" });
   if (!res.ok && res.status !== 409) throw new Error(`startBranchBackfill failed: ${res.status}`);
   return res.json();
 }
 
-// {running, completed, total} — see BackgroundTasksPanel.jsx, which polls
-// this while a backfill might be in progress.
+// {tasks: [{id, label, running, completed, total}, ...]} — see
+// BackgroundTasksPanel.jsx, which polls this continuously and renders one
+// progress bar per task (real backfill and/or any number of concurrent
+// simulated "Test progress bar" runs — see BackfillService).
 export async function fetchBranchBackfillStatus() {
   const res = await fetch("/api/branches/backfill");
   if (!res.ok) throw new Error(`fetchBranchBackfillStatus failed: ${res.status}`);

@@ -1,3 +1,4 @@
+import BackgroundTasksPanel from "../BackgroundTasksPanel";
 import DvdActivityBadge from "../DvdActivityBadge";
 import FailedQuickAddsButton from "../FailedQuickAddsButton";
 import SettingsPopover from "../SettingsPopover";
@@ -61,16 +62,16 @@ export default function AppHeader({
 
       {/* Row 1's right side on mobile (icons only — Refresh moves to the
           secondary toolbar row so row 1 stays compact); at sm+ this sits in
-          its original spot via sm:order-7/8 + sm:ml-auto on Refresh below. */}
+          its original spot via sm:order-8/9 + sm:ml-auto on Refresh below. */}
       <button
         onClick={onToggleTheme}
         aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        className="order-2 sm:order-7 w-8 h-8 flex items-center justify-center rounded hover:bg-[var(--surface-raised)] text-base"
+        className="order-2 sm:order-8 w-8 h-8 flex items-center justify-center rounded hover:bg-[var(--surface-raised)] text-base"
       >
         {mode === "dark" ? "☾" : "☀"}
       </button>
-      <div className="relative order-3 sm:order-8">
+      <div className="relative order-3 sm:order-9">
         <button
           onClick={onToggleSettings}
           aria-label="Settings"
@@ -117,9 +118,16 @@ export default function AppHeader({
         <FailedQuickAddsButton refreshKey={failedQuickAddsRefreshKey} />
       </div>
 
+      {/* Invisible unless a background task (currently just the branch
+          backfill) is actually running or just finished — see
+          BackgroundTasksPanel.jsx. */}
+      <div className="order-8 sm:order-6">
+        <BackgroundTasksPanel />
+      </div>
+
       <button
         onClick={onRefresh}
-        className="order-8 sm:order-6 sm:ml-auto px-2.5 py-1.5 text-xs rounded border border-[var(--rule-strong)] hover:bg-[var(--surface-raised)]"
+        className="order-9 sm:order-7 sm:ml-auto px-2.5 py-1.5 text-xs rounded border border-[var(--rule-strong)] hover:bg-[var(--surface-raised)]"
         title="Bypass cache and re-fetch live from Overseerr"
       >
         Refresh

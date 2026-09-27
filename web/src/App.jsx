@@ -1,6 +1,5 @@
 import { useState } from "react";
 import AppHeader from "./components/layout/AppHeader";
-import BackgroundTasksPanel from "./components/BackgroundTasksPanel";
 import MatchPanel from "./components/MatchPanel";
 import QuickAddPanel from "./components/QuickAddPanel";
 import RequestList from "./components/RequestList";
@@ -194,7 +193,6 @@ export default function App() {
           )}
         </div>
       </QuickAddProvider>
-      <BackgroundTasksPanel />
     </div>
   );
 }
