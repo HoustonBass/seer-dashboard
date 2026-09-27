@@ -15,11 +15,26 @@ implemented there, so it can print progress a background thread can't.
 TV explicitly excluded, same reasoning as MatchService.save_match: per-
 season branch data (one bib per season, not per show) is a bigger feature,
 out of scope for now.
+
+Tracks an arbitrary number of concurrent named tasks (self._tasks, keyed by
+task id) rather than one global running/completed/total, so the frontend's
+BackgroundTasksPanel can show more than one progress bar at once — a real
+backfill plus any number of simulated "Test progress bar" runs (see
+start_test_task), which are deliberately never deduped against each other
+since they're harmless and exist specifically to demo/exercise that UI.
+Only the real backfill dedups against itself (one `branch_backfill` task at
+a time — two overlapping real runs would just double the actual API
+traffic without finishing any faster).
 """
+import itertools
 import threading
 import time
 
 from app.repos.match_repo import STATUS_MATCHED, WHOLE_ITEM_SEASON
+
+BACKFILL_TASK_ID = "branch_backfill"
+SIMULATED_TASK_STEPS = 20
+SIMULATED_TASK_DELAY_SECONDS = 0.5
 
 
 class BackfillService:
@@ -27,13 +42,8 @@ class BackfillService:
         self.library_repo = library_repo
         self.match_repo = match_repo
         self._lock = threading.Lock()
-        self._running = False
-        # completed/total persist after a run finishes (not reset to 0) so
-        # the frontend's progress bar can show "207/207" briefly rather than
-        # snapping back to empty the instant the backend-side loop ends —
-        # see status(). Only reset at the start of the *next* run.
-        self._completed = 0
-        self._total = 0
+        self._tasks = {}
+        self._test_task_counter = itertools.count(1)
 
     def movie_bib_ids(self):
         matches = self.match_repo.get_all_matches()
@@ -48,41 +58,94 @@ class BackfillService:
         )
 
     def is_running(self):
-        return self._running
+        with self._lock:
+            return any(task["running"] for task in self._tasks.values())
 
     def status(self):
-        """{"running", "completed", "total"} — polled by the frontend's
-        background-task progress bar (see BackgroundTasksPanel.jsx)."""
-        return {"running": self._running, "completed": self._completed, "total": self._total}
+        """List of every known task (running or finished-but-not-yet-
+        cleared) — {"id", "label", "running", "completed", "total"} each.
+        Polled by BackgroundTasksPanel.jsx, one progress bar per task.
+        completed/total persist after a task finishes (not reset to 0) so
+        the frontend can show "20/20" briefly rather than snapping back to
+        empty the instant the backend-side loop ends — tasks are only
+        actually dropped from self._tasks when a fresh run reuses the same
+        id (real backfill) or never, for test tasks (harmless — the process
+        restarts long before that'd meaningfully accumulate)."""
+        with self._lock:
+            return list(self._tasks.values())
 
     def start_backfill(self, force=False):
         """Kicks off the throttled backfill in a background thread and
-        returns immediately. Refuses to start a second run concurrently
-        (returns False) — two overlapping loops would just double the real
-        API traffic without finishing any faster. `force=True` re-fetches
-        every matched movie's branches (a "hard refresh"), not just the
-        ones missing from the cache."""
+        returns immediately. Refuses to start a second *real* backfill
+        concurrently (returns False) — see module docstring. `force=True`
+        re-fetches every matched movie's branches (a "hard refresh"), not
+        just the ones missing from the cache."""
         with self._lock:
-            if self._running:
+            existing = self._tasks.get(BACKFILL_TASK_ID)
+            if existing and existing["running"]:
                 return False
-            self._running = True
-        threading.Thread(target=self._run, args=(force,), daemon=True).start()
+            self._tasks[BACKFILL_TASK_ID] = {
+                "id": BACKFILL_TASK_ID,
+                "label": "Hard-refreshing branch cache" if force else "Refreshing branch cache",
+                "running": True,
+                "completed": 0,
+                "total": 0,
+            }
+        threading.Thread(target=self._run_backfill, args=(force,), daemon=True).start()
         return True
 
-    def _run(self, force):
+    def start_test_task(self):
+        """Runs a fake ~10s progression instead of touching movie_bib_ids()/
+        library_repo at all — once everything's already cached, a real
+        "fill missing only" run finds nothing to fetch and finishes in
+        milliseconds, faster than the frontend's first status poll can ever
+        observe, so the progress chip never has a chance to appear. This is
+        what Settings' "Test progress bar" button uses to exercise that UI
+        on demand — never deduped, so clicking it more than once (or
+        Option/Alt+click, functionally identical — see SettingsPopover.jsx)
+        runs several concurrently, to demo multiple tasks tracked at once."""
+        task_id = f"test-{next(self._test_task_counter)}"
+        with self._lock:
+            self._tasks[task_id] = {
+                "id": task_id,
+                "label": f"Test task #{task_id.split('-')[1]}",
+                "running": True,
+                "completed": 0,
+                "total": SIMULATED_TASK_STEPS,
+            }
+        threading.Thread(target=self._run_test_task, args=(task_id,), daemon=True).start()
+        return True
+
+    def _increment(self, task_id):
+        with self._lock:
+            self._tasks[task_id]["completed"] += 1
+
+    def _finish(self, task_id):
+        with self._lock:
+            self._tasks[task_id]["running"] = False
+
+    def _run_backfill(self, force):
         try:
             bib_ids = self.movie_bib_ids()
-            self._total = len(bib_ids)
-            self._completed = 0
+            with self._lock:
+                self._tasks[BACKFILL_TASK_ID]["total"] = len(bib_ids)
             for bib_id in bib_ids:
                 if not force and self.library_repo.get_cached_branches(bib_id) is not None:
-                    self._completed += 1
+                    self._increment(BACKFILL_TASK_ID)
                     continue
                 try:
                     self.library_repo.get_bib_branches(bib_id, force_refresh=force)
                 except Exception:
                     pass
-                self._completed += 1
+                self._increment(BACKFILL_TASK_ID)
                 time.sleep(1)
         finally:
-            self._running = False
+            self._finish(BACKFILL_TASK_ID)
+
+    def _run_test_task(self, task_id):
+        try:
+            for _ in range(SIMULATED_TASK_STEPS):
+                time.sleep(SIMULATED_TASK_DELAY_SECONDS)
+                self._increment(task_id)
+        finally:
+            self._finish(task_id)

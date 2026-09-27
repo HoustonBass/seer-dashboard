@@ -11,6 +11,9 @@ def create_backfill_blueprint(backfill_service):
 
     @bp.route("/api/branches/backfill", methods=["POST"])
     def start_backfill():
+        if request.args.get("test") == "1":
+            backfill_service.start_test_task()
+            return jsonify({"started": True})
         force = request.args.get("force") == "1"
         started = backfill_service.start_backfill(force=force)
         if not started:
@@ -19,6 +22,6 @@ def create_backfill_blueprint(backfill_service):
 
     @bp.route("/api/branches/backfill")
     def backfill_status():
-        return jsonify(backfill_service.status())
+        return jsonify({"tasks": backfill_service.status()})
 
     return bp
