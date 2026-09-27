@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchSettings, setSetting } from "../lib/api";
+import { fetchSettings, setSetting, startBranchBackfill } from "../lib/api";
 import { getDefaultBranch, setDefaultBranch } from "../lib/defaultBranch";
 import Toggle from "./Toggle";
 
@@ -19,6 +19,7 @@ export default function SettingsPopover({ onClose, onRefresh }) {
   const [switches, setSwitches] = useState(null);
   const [error, setError] = useState("");
   const [defaultBranch, setDefaultBranchState] = useState(getDefaultBranch);
+  const [backfillMessage, setBackfillMessage] = useState("");
   const ref = useRef(null);
 
   useEffect(() => {
@@ -41,6 +42,26 @@ export default function SettingsPopover({ onClose, onRefresh }) {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [onClose]);
+
+  // Alt/Option+click hard-refreshes every matched movie's cached branches
+  // (not just the ones missing entirely) — see BackfillService.start_backfill's
+  // `force` param. Progress shows in BackgroundTasksPanel (App.jsx), not
+  // here — this popover closes long before a ~1/sec, multi-minute run
+  // finishes, so it can't own that state itself.
+  async function handleBackfillClick(e) {
+    const force = e.altKey;
+    setBackfillMessage("");
+    try {
+      const result = await startBranchBackfill(force);
+      if (result.already_running) {
+        setBackfillMessage("Already running — check the progress panel.");
+      } else {
+        setBackfillMessage(force ? "Hard refresh started." : "Backfill started (missing entries only).");
+      }
+    } catch (err) {
+      setBackfillMessage(`Failed to start — ${err.message}`);
+    }
+  }
 
   async function handleToggle(key, enabled) {
     const previous = switches;
@@ -79,6 +100,17 @@ export default function SettingsPopover({ onClose, onRefresh }) {
           Branch name or code (hover a "Which branches?" pill to see a result's code). Highlights that
           branch's pill when it has a copy.
         </p>
+      </div>
+
+      <div className="border-t border-[var(--rule)] pt-3">
+        <button
+          onClick={handleBackfillClick}
+          className="w-full text-sm rounded border border-[var(--rule-strong)] px-2 py-1.5 hover:bg-[var(--surface)]"
+          title="Fills in branch availability for matched movies missing it. Option/Alt+click to hard-refresh every matched movie's branches instead, not just the missing ones."
+        >
+          Refresh branch cache
+        </button>
+        {backfillMessage && <p className="text-[11px] leading-snug text-[var(--text-faint)] mt-1">{backfillMessage}</p>}
       </div>
 
       <div className="border-t border-[var(--rule)] pt-3">

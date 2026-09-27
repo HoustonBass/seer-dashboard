@@ -1,5 +1,6 @@
 import { useState } from "react";
 import AppHeader from "./components/layout/AppHeader";
+import BackgroundTasksPanel from "./components/BackgroundTasksPanel";
 import MatchPanel from "./components/MatchPanel";
 import QuickAddPanel from "./components/QuickAddPanel";
 import RequestList from "./components/RequestList";
@@ -9,6 +10,7 @@ import useRefreshSignal from "./hooks/useRefreshSignal";
 import useRequests from "./hooks/useRequests";
 import useRequestSelection from "./hooks/useRequestSelection";
 import usePrefetchNextSearch from "./hooks/usePrefetchNextSearch";
+import { getDefaultBranch } from "./lib/defaultBranch";
 import { getDefaultFilter, setDefaultFilter } from "./lib/defaultFilter";
 import { filterByStatus, searchRequests } from "./lib/requestFilters";
 import { useThemeMode } from "./theme/ThemeModeContext";
@@ -67,7 +69,7 @@ export default function App() {
     setQuickAddResult(null);
   }
 
-  const displayedRequests = filterByStatus(requests, filter);
+  const displayedRequests = filterByStatus(requests, filter, getDefaultBranch());
   const searchedRequests = searchRequests(displayedRequests, search);
 
   // Option/Alt+click on "Choose" (see MatchPanel/SearchResultsTable) saves
@@ -192,6 +194,7 @@ export default function App() {
           )}
         </div>
       </QuickAddProvider>
+      <BackgroundTasksPanel />
     </div>
   );
 }

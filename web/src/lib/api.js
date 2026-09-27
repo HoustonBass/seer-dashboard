@@ -187,3 +187,23 @@ export async function setSetting(key, enabled, seconds) {
   if (!res.ok) throw new Error(`setSetting failed: ${res.status}`);
   return res.json();
 }
+
+// Kicks off the branch-availability backfill (see
+// app/services/backfill_service.py) — fills in missing entries only unless
+// force is true (re-fetches every matched movie, a "hard refresh"). Returns
+// {started} or, if one's already running, a 409 with {started: false,
+// already_running: true} — not thrown as an error, since that's an
+// expected/normal outcome the caller should handle, not a failure.
+export async function startBranchBackfill(force = false) {
+  const res = await fetch(`/api/branches/backfill${force ? "?force=1" : ""}`, { method: "POST" });
+  if (!res.ok && res.status !== 409) throw new Error(`startBranchBackfill failed: ${res.status}`);
+  return res.json();
+}
+
+// {running, completed, total} — see BackgroundTasksPanel.jsx, which polls
+// this while a backfill might be in progress.
+export async function fetchBranchBackfillStatus() {
+  const res = await fetch("/api/branches/backfill");
+  if (!res.ok) throw new Error(`fetchBranchBackfillStatus failed: ${res.status}`);
+  return res.json();
+}
