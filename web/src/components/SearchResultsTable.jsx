@@ -72,9 +72,14 @@ function ResultRow({ r, chosen, onChoose, openQuickAdd }) {
   // Which physical branches hold a copy, and each copy's status — search
   // only ever gives the aggregate available/total count, not which branches
   // (see LibraryRepo.get_bib_branches / scripts/discovery/branch-availability.md).
-  // Same on-demand-per-click shape as edition above, no pre-fill from the
-  // search response since branch data isn't cached inline there.
-  const [branches, setBranches] = useState(null);
+  // Fetched lazily on click rather than for every result up front, same
+  // reasoning as edition above — but `r.branches` arrives pre-filled
+  // whenever LibraryRepo already had this bib_id's branches cached from a
+  // prior lookup (e.g. it's already matched to some other request, or
+  // scripts/backfill_branch_cache.py covered it — see
+  // LibraryRepo._attach_cached_branches), so seed from that instead of
+  // always starting from "not fetched yet".
+  const [branches, setBranches] = useState(r.branches ?? null);
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [branchesError, setBranchesError] = useState(null);
 

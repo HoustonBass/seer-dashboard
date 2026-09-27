@@ -530,6 +530,19 @@ class LibraryRepo:
             )
         return records
 
+    def _attach_cached_branches(self, records):
+        """Fills in `record["branches"]` from the bib_branches cache when
+        already present — e.g. this same bib_id is already matched to some
+        other request (see RequestsService._join_match / MatchService.
+        save_match, which warm this cache) or scripts/backfill_branch_cache.py
+        already covered it — None otherwise. Same reasoning as
+        _attach_cached_editions above: never triggers a live fetch itself,
+        that stays an on-demand get_bib_branches call via the "Which
+        branches?" button (see search_controller.py's /branches route)."""
+        for record in records:
+            record["branches"] = self.get_cached_branches(record["bib_id"])
+        return records
+
     # -- account summary (checkouts/holds — see scripts/discovery/account.md) --
 
     @staticmethod
@@ -782,4 +795,4 @@ class LibraryRepo:
             return records
 
         records, source = self._singleflight.get_or_fetch(cache_key, get_cached, fetch_and_cache, force_refresh=force_refresh)
-        return self._attach_cached_editions(records), source
+        return self._attach_cached_branches(self._attach_cached_editions(records)), source

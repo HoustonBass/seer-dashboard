@@ -336,6 +336,20 @@ def test_get_cached_branches_returns_the_list_after_a_prior_live_fetch(repo):
     assert {b["branch_code"] for b in cached} == {"ALPH", "MILTON"}
 
 
+def test_search_attaches_cached_branches_when_already_cached(repo):
+    def fake_get(url, **kwargs):
+        return FakeResponse(BRANCH_AVAILABILITY_RESPONSE if "availability" in url else SEARCH_RESPONSE)
+
+    with patch.object(repo, "authenticate", return_value=("token", "session")), \
+         patch("app.repos.library_repo.http.get", side_effect=fake_get):
+        repo.get_bib_branches("B1")  # e.g. already matched to some other request
+        records, _ = repo.search("terminator", "DVD")
+
+    by_id = {r["bib_id"]: r for r in records}
+    assert {b["branch_code"] for b in by_id["B1"]["branches"]} == {"ALPH", "MILTON"}
+    assert by_id["B2"]["branches"] is None  # never fetched — not "not available anywhere"
+
+
 def test_get_bib_edition_extracts_edition_and_publication_note(repo):
     with patch.object(repo, "authenticate", return_value=("token", "session")), \
          patch("app.repos.library_repo.http.get", return_value=FakeResponse(CATALOG_BIB_RESPONSE)):
