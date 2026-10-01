@@ -1,7 +1,7 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { groupByCollection as buildGroups } from "../lib/collectionGrouping";
 import { getDefaultBranch } from "../lib/defaultBranch";
-import { mediaStatusLabel } from "../lib/labels";
-import { isAvailableAtPreferredBranch } from "../lib/requestFilters";
+import { STAGE_LABELS, requestStage } from "../lib/requestStage";
 
 // One row per Overseerr request, styled as a scannable list (not a dense
 // table) — status as a pill, the library match (if any) as a spine-label
@@ -14,9 +14,35 @@ import { isAvailableAtPreferredBranch } from "../lib/requestFilters";
 // instead of in a separate side panel, since there's no "side" to put it in
 // on a single-column layout. Desktop passes nothing, so this component's
 // own behavior doesn't change there.
-export default function RequestList({ requests, selectedId, onSelect, searchQuery = "", onClearSearch, renderAfterRow }) {
+export default function RequestList({
+  requests,
+  selectedId,
+  onSelect,
+  searchQuery = "",
+  onClearSearch,
+  renderAfterRow,
+  collapseCollectionsByDefault = false,
+}) {
   const isSearching = searchQuery.trim().length > 0;
   const defaultBranch = getDefaultBranch();
+  // Per-group open/closed choices made this session; anything not in here
+  // follows the "collapse by default" setting.
+  const [openOverrides, setOpenOverrides] = useState(() => new Map());
+  const isOpen = (key) => openOverrides.get(key) ?? !collapseCollectionsByDefault;
+
+  const entries = requests ? buildGroups(requests) : null;
+
+  // Selecting a request inside a collapsed group (e.g. "next unmatched")
+  // re-opens it — otherwise the selection would be hidden in the list.
+  useEffect(() => {
+    const group = entries?.find((e) => e.kind === "group" && e.requests.some((r) => r.id === selectedId));
+    if (group) setOpenOverrides((prev) => (prev.get(group.key) === true ? prev : new Map(prev).set(group.key, true)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  function toggleGroup(key) {
+    setOpenOverrides((prev) => new Map(prev).set(key, !(prev.get(key) ?? !collapseCollectionsByDefault)));
+  }
 
   if (requests === null) {
     return <p className="p-5 text-sm text-[var(--text-faint)]">Loading requests…</p>;
@@ -31,6 +57,59 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
       </div>
     ) : (
       <p className="p-5 text-sm text-[var(--text-faint)]">No requests found.</p>
+    );
+  }
+
+  function renderRow(r) {
+    const stage = requestStage(r, defaultBranch);
+    const seasonProgress =
+      r.type === "tv" && r.seasons?.length > 0 && stage.key !== "available"
+        ? `${r.seasons.filter((n) => r.season_matches?.[n]?.status === "matched").length}/${r.seasons.length} seasons`
+        : null;
+    return (
+      <Fragment key={r.id}>
+        <div
+          onClick={() => onSelect(r)}
+          className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
+            selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
+          }`}
+        >
+          <div className="flex-1 basis-48 min-w-0">
+            <div className="font-semibold text-sm truncate">
+              {r.title}
+              {r.tmdb?.release_date && (
+                <span className="text-[var(--text-faint)] font-normal"> ({r.tmdb.release_date.slice(0, 4)})</span>
+              )}
+            </div>
+            <div className="text-xs text-[var(--text-faint)] mt-0.5">
+              {r.type}
+              {r.tmdb?.director && <> · {r.tmdb.director}</>}
+            </div>
+          </div>
+
+          {/* One pill for where the request is in the pipeline (Requested ->
+              Matched -> Available, see lib/requestStage.js), plus the
+              preferred-branch pickup pill. They sit right of the title
+              when there's room; the title's flex-basis is what makes the
+              row wrap them underneath once a narrow screen can't fit both. */}
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`inline-flex items-center justify-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap sm:min-w-[8.5rem] ${STAGE_PILL[stage.key]}`}
+              title={r.match?.bib_title ? `${r.match.bib_title}${r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}` : undefined}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              {STAGE_LABELS[stage.key]}
+              {seasonProgress && <span className="mono font-normal"> · {seasonProgress}</span>}
+            </span>
+            {stage.atBranch && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--primary)] bg-[var(--pending-bg)] whitespace-nowrap">
+                ★ at your branch
+              </span>
+            )}
+          </div>
+        </div>
+        {selectedId === r.id && renderAfterRow?.(r)}
+      </Fragment>
     );
   }
 
@@ -57,100 +136,70 @@ export default function RequestList({ requests, selectedId, onSelect, searchQuer
           ))}
         </div>
       )}
-      {requests.map((r) => {
-        const available = Number(r.media_status) === 5;
-        return (
-          <Fragment key={r.id}>
-            <div
-              onClick={() => onSelect(r)}
-              className={`flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3 px-5 py-3 border-b border-[var(--rule)] cursor-pointer hover:bg-[var(--surface-raised)] ${
-                selectedId === r.id ? "bg-[var(--surface-raised)] shadow-[inset_3px_0_0_var(--accent)]" : ""
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm truncate">
-                  {r.title}
-                  {r.tmdb?.release_date && (
-                    <span className="text-[var(--text-faint)] font-normal"> ({r.tmdb.release_date.slice(0, 4)})</span>
-                  )}
-                </div>
-                <div className="text-xs text-[var(--text-faint)] mt-0.5">
-                  {r.type}
-                  {r.tmdb?.director && <> · {r.tmdb.director}</>}
-                </div>
-              </div>
-
-              {/* On mobile these two pills stack full-width below the title
-                  instead of squeezing into the same row as it — three
-                  whitespace-nowrap chips fighting for ~375px made long match
-                  titles/subtitles unreadable. lg:contents removes this wrapper
-                  from the layout at desktop size so the row is exactly the
-                  same flex-row of 3 items it always was — no desktop change. */}
-              <div className="flex flex-wrap gap-1.5 lg:contents">
-                <span
-                  className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
-                    available
-                      ? "text-[var(--available)] bg-[var(--available-bg)]"
-                      : "text-[var(--pending)] bg-[var(--pending-bg)]"
-                  }`}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                  {mediaStatusLabel(Number(r.media_status))}
-                </span>
-
-                {r.type === "tv" && r.seasons?.length > 0 ? (
-                  <SeasonProgressBadge seasons={r.seasons} seasonMatches={r.season_matches} />
-                ) : r.match?.status === "matched" ? (
-                  <>
-                    <span
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--available)] bg-[var(--available-bg)] whitespace-nowrap"
-                      title={`${r.match.bib_title}${r.match.bib_subtitle ? `: ${r.match.bib_subtitle}` : ""}`}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      Matched
-                    </span>
-                    {isAvailableAtPreferredBranch(r.match, defaultBranch) && (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--primary)] bg-[var(--pending-bg)] whitespace-nowrap">
-                        ★ at your branch
-                      </span>
-                    )}
-                  </>
-                ) : r.match?.status === "unavailable" ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--accent)] bg-[var(--accent)]/10 whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                    not in library
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-[var(--unmatched)] bg-[var(--unmatched-bg)] whitespace-nowrap">
-                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                    unmatched
-                  </span>
-                )}
-              </div>
-            </div>
-            {selectedId === r.id && renderAfterRow?.(r)}
-          </Fragment>
-        );
-      })}
+      {entries.map((e) =>
+        e.kind === "row" ? (
+          renderRow(e.request)
+        ) : (
+          <CollectionGroup
+            key={`collection-${e.key}`}
+            group={e}
+            open={isOpen(e.key)}
+            onToggle={() => toggleGroup(e.key)}
+            renderRow={renderRow}
+            defaultBranch={defaultBranch}
+          />
+        ),
+      )}
     </div>
   );
 }
 
-// Compact "x of y requested seasons matched" pill for TV rows — the season
-// accordion itself lives in MatchPanel; this list only needs the summary.
-// Green only once every requested season is matched; amber-ish "unmatched"
-// tone otherwise so a partially-matched show still reads as needing attention.
-function SeasonProgressBadge({ seasons, seasonMatches }) {
-  const matchedCount = seasons.filter((s) => seasonMatches?.[s]?.status === "matched").length;
-  const allMatched = seasons.length > 0 && matchedCount === seasons.length;
+const STAGE_PILL = {
+  requested: "text-[var(--unmatched)] bg-[var(--unmatched-bg)]",
+  matched: "text-[var(--pending)] bg-[var(--pending-bg)]",
+  no_match: "text-[var(--accent)] bg-[var(--accent)]/10",
+  available: "text-[var(--available)] bg-[var(--available-bg)]",
+};
+const STAGE_SEGMENT = {
+  requested: "bg-[var(--unmatched-bg)] border-[var(--rule-strong)]",
+  matched: "bg-[var(--pending)] border-[var(--pending)]",
+  no_match: "bg-[var(--accent)] border-[var(--accent)]",
+  available: "bg-[var(--available)] border-[var(--available)]",
+};
+
+// A collection's requested movies, pulled together into one bordered card:
+// the collection name and a matched-progress bar. Rows inside are the same rows as the flat list.
+function CollectionGroup({ group, open, onToggle, renderRow, defaultBranch }) {
+  const stages = group.requests.map((r) => requestStage(r, defaultBranch).key);
+  const summary = ["available", "matched", "no_match", "requested"]
+    .map((key) => [stages.filter((k) => k === key).length, key])
+    .filter(([n]) => n > 0)
+    .map(([n, key]) => `${n} ${STAGE_LABELS[key].toLowerCase()}`)
+    .join(" · ");
   return (
-    <span
-      className={`mono inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${
-        allMatched ? "text-[var(--available)] bg-[var(--available-bg)]" : "text-[var(--unmatched)] bg-[var(--unmatched-bg)]"
-      }`}
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {matchedCount}/{seasons.length} seasons
-    </span>
+    <section className="mx-2 sm:mx-3.5 my-3.5 border border-[var(--rule-strong)] bg-[var(--surface)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`w-full flex flex-wrap items-center gap-x-3.5 gap-y-1 text-left px-5 py-3 ${open ? "border-b border-[var(--rule)]" : ""}`}
+      >
+        <span className="flex-1 basis-40 min-w-0 text-lg leading-tight text-balance" style={{ fontFamily: "Georgia, 'Iowan Old Style', serif" }}>
+          {group.name}
+        </span>
+        <span className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+          <span className="flex gap-[3px]" aria-hidden="true">
+            {stages.map((key, i) => (
+              <i key={group.requests[i].id} className={`w-3.5 h-1.5 border ${STAGE_SEGMENT[key]}`} />
+            ))}
+          </span>
+          <span className="mono">{summary}</span>
+        </span>
+        <span aria-hidden="true" className={`mono text-[var(--text-faint)] text-xs transition-transform ${open ? "" : "-rotate-90"}`}>
+          ▾
+        </span>
+      </button>
+      {open && <div className="[&>*:last-child]:border-b-0">{group.requests.map(renderRow)}</div>}
+    </section>
   );
 }

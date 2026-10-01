@@ -26,6 +26,10 @@ export default function AppHeader({
   mode,
   onToggleTheme,
   settingsOpen,
+  view,
+  onViewChange,
+  collapseCollections,
+  onCollapseCollectionsChange,
   onToggleSettings,
   onCloseSettings,
 }) {
@@ -39,7 +43,27 @@ export default function AppHeader({
           seerr-dashboard
         </h1>
 
-        <div className="flex items-center gap-1.5 sm:ml-4">
+        <div role="tablist" aria-label="View" className="flex rounded border border-[var(--rule-strong)] overflow-hidden text-xs font-semibold sm:ml-4">
+          {[
+            ["requests", "Requests"],
+            ["find", "Find movies"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              role="tab"
+              aria-selected={view === value}
+              onClick={() => onViewChange(value)}
+              className={`px-2.5 py-1 whitespace-nowrap ${
+                view === value ? "bg-[var(--text)] text-[var(--surface)]" : "text-[var(--text-muted)] hover:bg-[var(--surface-raised)]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {view === "requests" && (
+        <div className="flex items-center gap-1.5">
           <span
             className="mono w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold text-[var(--text-muted)] bg-[var(--unmatched-bg)]"
             title={`${requestCount ?? 0} requests match this filter`}
@@ -58,6 +82,7 @@ export default function AppHeader({
             ))}
           </select>
         </div>
+        )}
       </div>
 
       {/* Row 1's right side on mobile (icons only — Refresh moves to the
@@ -81,33 +106,42 @@ export default function AppHeader({
         >
           ⚙
         </button>
-        {settingsOpen && <SettingsPopover onClose={onCloseSettings} onRefresh={onRefresh} />}
+        {settingsOpen && (
+          <SettingsPopover
+            onClose={onCloseSettings}
+            onRefresh={onRefresh}
+            collapseCollections={collapseCollections}
+            onCollapseCollectionsChange={onCollapseCollectionsChange}
+          />
+        )}
       </div>
 
       {/* Row 2 on mobile — full width, its own line. */}
-      <div className="relative order-4 sm:order-2 w-full sm:w-52 sm:ml-2">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-faint)] pointer-events-none"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4.3-4.3" />
-        </svg>
-        <input
-          type="text"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search title, requester, or director…"
-          className="w-full rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] pl-7 pr-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
-        />
-      </div>
+      {view === "requests" && (
+        <div className="relative order-4 sm:order-2 w-full sm:w-52 sm:ml-2">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-faint)] pointer-events-none"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search title, requester, or director…"
+            className="w-full rounded border border-[var(--rule-strong)] bg-[var(--surface-raised)] pl-7 pr-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+          />
+        </div>
+      )}
 
       {/* Row 3 on mobile — secondary toolbar: status text, badges, and
           Refresh, wrapping together as one cohesive group. */}
-      {requestsSource && (
+      {view === "requests" && requestsSource && (
         <span className="order-5 sm:order-3 text-xs text-[var(--text-faint)]">source: {requestsSource}</span>
       )}
 

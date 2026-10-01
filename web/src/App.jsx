@@ -2,6 +2,7 @@ import { useState } from "react";
 import AppHeader from "./components/layout/AppHeader";
 import MatchPanel from "./components/MatchPanel";
 import QuickAddPanel from "./components/QuickAddPanel";
+import MovieSearch from "./components/MovieSearch";
 import RequestList from "./components/RequestList";
 import { QuickAddProvider } from "./QuickAddContext";
 import useIsMobile from "./hooks/useIsMobile";
@@ -9,6 +10,7 @@ import useRefreshSignal from "./hooks/useRefreshSignal";
 import useRequests from "./hooks/useRequests";
 import useRequestSelection from "./hooks/useRequestSelection";
 import usePrefetchNextSearch from "./hooks/usePrefetchNextSearch";
+import { getCollapseCollections, setCollapseCollections } from "./lib/collectionGrouping";
 import { getDefaultBranch } from "./lib/defaultBranch";
 import { getDefaultFilter, setDefaultFilter } from "./lib/defaultFilter";
 import { filterByStatus, searchRequests } from "./lib/requestFilters";
@@ -39,7 +41,13 @@ export default function App() {
     setFilter(value);
     setDefaultFilter(value);
   }
+  const [view, setView] = useState("requests");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [collapseCollections, setCollapseCollectionsState] = useState(getCollapseCollections);
+  function handleCollapseCollectionsChange(enabled) {
+    setCollapseCollectionsState(enabled);
+    setCollapseCollections(enabled);
+  }
   const [quickAddResult, setQuickAddResult] = useState(null);
   const [dvdCountRefreshKey, bumpDvdCount] = useRefreshSignal();
   const [failedQuickAddsRefreshKey, bumpFailedQuickAdds] = useRefreshSignal();
@@ -153,8 +161,15 @@ export default function App() {
         settingsOpen={settingsOpen}
         onToggleSettings={() => setSettingsOpen((o) => !o)}
         onCloseSettings={() => setSettingsOpen(false)}
+        view={view}
+        onViewChange={setView}
+        collapseCollections={collapseCollections}
+        onCollapseCollectionsChange={handleCollapseCollectionsChange}
       />
 
+      {view === "find" ? (
+        <MovieSearch />
+      ) : (
       <QuickAddProvider value={setQuickAddResult}>
         <div
           className={`grid grid-cols-1 gap-px bg-[var(--rule)] border-b border-[var(--rule)] ${
@@ -163,12 +178,14 @@ export default function App() {
         >
           <div className="bg-[var(--surface)]">
             <RequestList
+              key={String(collapseCollections)}
               requests={searchedRequests}
               selectedId={selected?.id}
               onSelect={selectRequest}
               searchQuery={search}
               onClearSearch={() => setSearch("")}
               renderAfterRow={isMobile ? renderInlineMatchPanel : undefined}
+              collapseCollectionsByDefault={collapseCollections}
             />
           </div>
           {!isMobile && (
@@ -193,6 +210,7 @@ export default function App() {
           )}
         </div>
       </QuickAddProvider>
+      )}
     </div>
   );
 }

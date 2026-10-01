@@ -27,7 +27,7 @@ from app.lib.env import data_dir
 from app.lib.singleflight import SingleFlightCache
 
 DB_PATH = data_dir() / "tmdb_cache.db"
-DEFAULT_TTL_SECONDS = 24 * 60 * 60  # movie/tv metadata rarely changes day to day
+DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60  # movie/tv metadata rarely changes, even week to week
 
 
 class TmdbRepo:
@@ -64,6 +64,15 @@ class TmdbRepo:
             );
             """
         )
+        # Collection columns were added after the table already existed in
+        # real caches. Zeroing fetched_at on that first migration expires
+        # every old row, so each one refetches and picks up its collection
+        # instead of staying collection-less until the TTL lapses.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(media)")}
+        if "collection_id" not in columns:
+            conn.execute("ALTER TABLE media ADD COLUMN collection_id INTEGER")
+            conn.execute("ALTER TABLE media ADD COLUMN collection_name TEXT")
+            conn.execute("UPDATE media SET fetched_at = 0")
         conn.commit()
         return conn
 
@@ -85,6 +94,7 @@ class TmdbRepo:
             None,
         )
         cast = [c["name"] for c in credits.get("cast", [])[:5]]
+        collection = data.get("belongs_to_collection") or {}
 
         return {
             "media_type": media_type,
@@ -97,6 +107,8 @@ class TmdbRepo:
             "director": director,
             "cast": cast,
             "runtime": data.get("runtime") or (data.get("episode_run_time") or [None])[0],
+            "collection_id": collection.get("id"),
+            "collection_name": collection.get("name"),
         }
 
     # -- cache --------------------------------------------------------------
@@ -120,9 +132,11 @@ class TmdbRepo:
             self._conn.execute(
                 """
                 INSERT INTO media (media_type, tmdb_id, title, release_date, overview,
-                    genres, poster_path, director, cast, runtime, fetched_at)
+                    genres, poster_path, director, cast, runtime, collection_id,
+                    collection_name, fetched_at)
                 VALUES (:media_type, :tmdb_id, :title, :release_date, :overview,
-                    :genres, :poster_path, :director, :cast, :runtime, :fetched_at)
+                    :genres, :poster_path, :director, :cast, :runtime, :collection_id,
+                    :collection_name, :fetched_at)
                 ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
                     title=excluded.title,
                     release_date=excluded.release_date,
@@ -132,6 +146,8 @@ class TmdbRepo:
                     director=excluded.director,
                     cast=excluded.cast,
                     runtime=excluded.runtime,
+                    collection_id=excluded.collection_id,
+                    collection_name=excluded.collection_name,
                     fetched_at=excluded.fetched_at
                 """,
                 {

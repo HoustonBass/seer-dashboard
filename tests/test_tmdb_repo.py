@@ -170,3 +170,60 @@ def test_api_key_sent_as_query_param(repo):
         repo.get("movie", 438631)
 
     assert captured_params["api_key"] == "test-key"
+
+
+SPIDER_MAN_RESPONSE = {
+    **MOVIE_RESPONSE,
+    "title": "Spider-Man: Homecoming",
+    "belongs_to_collection": {"id": 531241, "name": "Spider-Man (MCU) Collection"},
+}
+
+
+def test_get_movie_captures_collection_and_survives_the_cache_round_trip(repo):
+    with patch("app.repos.tmdb_repo.http.get", return_value=FakeResponse(SPIDER_MAN_RESPONSE)):
+        live, _ = repo.get("movie", 315635)
+        cached, source = repo.get("movie", 315635)
+
+    assert source == "cache"
+    for record in (live, cached):
+        assert record["collection_id"] == 531241
+        assert record["collection_name"] == "Spider-Man (MCU) Collection"
+
+
+def test_movie_without_a_collection_has_null_collection_fields(repo):
+    with patch("app.repos.tmdb_repo.http.get", return_value=FakeResponse(MOVIE_RESPONSE)):
+        record, _ = repo.get("movie", 438631)
+
+    assert record["collection_id"] is None
+    assert record["collection_name"] is None
+
+
+def test_pre_collection_cache_is_migrated_and_old_rows_refetch(tmp_path):
+    import sqlite3
+    import time
+
+    db_path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE media (
+            media_type TEXT NOT NULL, tmdb_id INTEGER NOT NULL, title TEXT,
+            release_date TEXT, overview TEXT, genres TEXT, poster_path TEXT,
+            director TEXT, cast TEXT, runtime INTEGER, fetched_at REAL NOT NULL,
+            PRIMARY KEY (media_type, tmdb_id)
+        );
+        """
+    )
+    legacy.execute(
+        "INSERT INTO media (media_type, tmdb_id, title, fetched_at) VALUES ('movie', 315635, 'Old', ?)",
+        (time.time(),),  # fresh by TTL — would be served as-is without the migration
+    )
+    legacy.commit()
+    legacy.close()
+
+    repo = TmdbRepo(api_key="k", base_url="https://tmdb.example", db_path=db_path)
+    with patch("app.repos.tmdb_repo.http.get", return_value=FakeResponse(SPIDER_MAN_RESPONSE)):
+        record, source = repo.get("movie", 315635)
+
+    assert source == "live"
+    assert record["collection_id"] == 531241

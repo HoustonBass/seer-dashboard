@@ -17,6 +17,7 @@ from app.controllers.account_controller import create_account_blueprint
 from app.controllers.backfill_controller import create_backfill_blueprint
 from app.controllers.hold_controller import create_hold_blueprint
 from app.controllers.matches_controller import create_matches_blueprint
+from app.controllers.movies_controller import create_movies_blueprint
 from app.controllers.quick_add_controller import create_quick_add_blueprint
 from app.controllers.requests_controller import create_requests_blueprint
 from app.controllers.search_controller import create_search_blueprint
@@ -31,6 +32,7 @@ from app.services.account_service import AccountService
 from app.services.backfill_service import BackfillService
 from app.services.hold_service import HoldService
 from app.services.match_service import MatchService
+from app.services.movie_search_service import MovieSearchService
 from app.services.quick_add_service import QuickAddService
 from app.services.requests_service import RequestsService
 from app.services.search_service import SearchService
@@ -53,6 +55,7 @@ def create_app():
     requests_service = RequestsService(seerr_repo, match_repo, tmdb_repo, library_repo)
     search_service = SearchService(library_repo, match_repo)
     match_service = MatchService(match_repo, library_repo)
+    movie_search_service = MovieSearchService(seerr_repo, tmdb_repo)
     settings_service = SettingsService()
     quick_add_service = QuickAddService(tmdb_repo, seerr_repo, match_repo, failed_quick_add_repo, library_repo)
     account_service = AccountService(library_repo)
@@ -62,6 +65,7 @@ def create_app():
     app.register_blueprint(create_requests_blueprint(requests_service))
     app.register_blueprint(create_search_blueprint(search_service))
     app.register_blueprint(create_matches_blueprint(match_service))
+    app.register_blueprint(create_movies_blueprint(movie_search_service))
     app.register_blueprint(create_settings_blueprint(settings_service))
     app.register_blueprint(create_quick_add_blueprint(quick_add_service))
     app.register_blueprint(create_account_blueprint(account_service))

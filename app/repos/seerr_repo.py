@@ -17,6 +17,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import requests as http
 
@@ -26,6 +27,7 @@ from app.lib.feature_switch import delay_switch
 
 DB_PATH = data_dir() / "seerr_cache.db"
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
+COLLECTION_TTL_SECONDS = 60 * 60  # parts carry live availability, so much shorter than TMDB metadata
 TITLE_LOOKUP_WORKERS = 10  # neither Overseerr nor TMDB offer a bulk title-lookup
 # endpoint — this is one HTTP call per request just to resolve a title, so on
 # a cold cache with hundreds of requests that's the dominant cost. They're
@@ -55,6 +57,11 @@ class SeerrRepo:
             """
             CREATE TABLE IF NOT EXISTS requests_cache (
                 filter_key TEXT PRIMARY KEY,
+                payload_json TEXT NOT NULL,
+                fetched_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS collections_cache (
+                collection_id INTEGER PRIMARY KEY,
                 payload_json TEXT NOT NULL,
                 fetched_at REAL NOT NULL
             );
@@ -95,6 +102,80 @@ class SeerrRepo:
         if media_type == "movie":
             return self._get(f"/api/v1/movie/{tmdb_id}").get("title", "?")
         return self._get(f"/api/v1/tv/{tmdb_id}").get("name", "?")
+
+    @staticmethod
+    def _movie_summary(r):
+        """The slice of an Overseerr movie result (search hit or collection
+        part — same shape) the UI needs. media_status is Overseerr's own
+        (5 = available, 2/3 = requested), None when it has never been
+        requested."""
+        return {
+            "tmdb_id": r["id"],
+            "title": r.get("title"),
+            "release_date": r.get("releaseDate") or None,
+            "poster_path": r.get("posterPath"),
+            "overview": r.get("overview"),
+            "media_status": (r.get("mediaInfo") or {}).get("status"),
+        }
+
+    def search_movies(self, query):
+        """GET /api/v1/search, movies only (drops tv/person hits). Live and
+        uncached — it's an interactive lookup. Overseerr rejects the `+`
+        that `requests` uses for spaces in `params=` (400 "must be url
+        encoded"), so the query is percent-encoded into the URL by hand."""
+        url = f"{self.base_url}/api/v1/search?query={quote(query, safe='')}"
+        response = http.get(url, headers=self._headers(), timeout=15)
+        response.raise_for_status()
+        return [self._movie_summary(r) for r in response.json().get("results", []) if r.get("mediaType") == "movie"]
+
+    def _fetch_collection_live(self, collection_id):
+        data = self._get(f"/api/v1/collection/{collection_id}")
+        parts = sorted(
+            (self._movie_summary(p) for p in data.get("parts", [])),
+            key=lambda p: (p["release_date"] is None, p["release_date"] or ""),
+        )
+        return {"id": data["id"], "name": data.get("name"), "overview": data.get("overview"), "parts": parts}
+
+    def get_collection(self, collection_id, ttl=COLLECTION_TTL_SECONDS, force_refresh=False):
+        """Every movie in a TMDB collection with Overseerr's availability for
+        each, requested or not. Returns (collection, source) like the other
+        cached getters."""
+        cutoff = time.time() - ttl
+
+        def get_cached():
+            with self._db_lock:
+                row = self._conn.execute(
+                    "SELECT payload_json FROM collections_cache WHERE collection_id = ? AND fetched_at >= ?",
+                    (collection_id, cutoff),
+                ).fetchone()
+            return json.loads(row["payload_json"]) if row else None
+
+        def fetch_and_cache():
+            collection = self._fetch_collection_live(collection_id)
+            with self._db_lock:
+                self._conn.execute(
+                    """
+                    INSERT INTO collections_cache (collection_id, payload_json, fetched_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(collection_id) DO UPDATE SET
+                        payload_json=excluded.payload_json,
+                        fetched_at=excluded.fetched_at
+                    """,
+                    (collection_id, json.dumps(collection), time.time()),
+                )
+                self._conn.commit()
+            return collection
+
+        return self._singleflight.get_or_fetch(
+            ("collection", collection_id), get_cached, fetch_and_cache, force_refresh=force_refresh
+        )
+
+    def drop_collection_cache(self, collection_id):
+        """Forget a cached collection — its parts' availability just changed
+        (a request was made), so the next read should fetch fresh."""
+        with self._db_lock:
+            self._conn.execute("DELETE FROM collections_cache WHERE collection_id = ?", (collection_id,))
+            self._conn.commit()
 
     def fetch_raw_requests(self, filter_key):
         """Just the Overseerr request-list pagination — no per-row title

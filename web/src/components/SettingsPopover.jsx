@@ -15,7 +15,7 @@ import Toggle from "./Toggle";
 // (lib/defaultFilter.js) isn't set here — the header's filter dropdown
 // itself persists whatever you pick directly (see App.jsx's
 // handleFilterChange), so there's nothing left for this popover to do.
-export default function SettingsPopover({ onClose, onRefresh }) {
+export default function SettingsPopover({ onClose, onRefresh, collapseCollections, onCollapseCollectionsChange }) {
   const [switches, setSwitches] = useState(null);
   const [error, setError] = useState("");
   const [defaultBranch, setDefaultBranchState] = useState(getDefaultBranch);
@@ -128,6 +128,16 @@ export default function SettingsPopover({ onClose, onRefresh }) {
           Branch name or code (hover a "Which branches?" pill to see a result's code). Highlights that
           branch's pill when it has a copy.
         </p>
+      </div>
+
+      <div className="border-t border-[var(--rule)] pt-3 flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm">Collapse collections</div>
+          <p className="text-[11px] leading-snug text-[var(--text-faint)]">
+            Collection cards start closed. Click a card's header to open it.
+          </p>
+        </div>
+        <Toggle checked={collapseCollections} onChange={onCollapseCollectionsChange} title="Start collection cards collapsed" />
       </div>
 
       <div className="border-t border-[var(--rule)] pt-3">

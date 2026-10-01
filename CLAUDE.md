@@ -163,7 +163,7 @@ changes, both sides need updating; check both.
   "Read Access Token" (a JWT) and OMDb (a different, unrelated service at
   omdbapi.com) will both look plausible but fail — confirm with a real call
   before assuming a new key is wired correctly, don't just trust the format.
-  Own cache: `data/tmdb_cache.db` (24h TTL). `get(media_type, tmdb_id)` /
+  Own cache: `data/tmdb_cache.db` (7-day TTL). `get(media_type, tmdb_id)` /
   `get_many(items)` where `media_type` is `"movie"` or `"tv"`, matching
   Overseerr's own values. `get_many` parallelizes via `ThreadPoolExecutor`
   (same reasoning as `SeerrRepo`'s title lookups — no bulk endpoint exists)

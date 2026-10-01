@@ -218,3 +218,43 @@ export async function fetchBranchBackfillStatus() {
   if (!res.ok) throw new Error(`fetchBranchBackfillStatus failed: ${res.status}`);
   return res.json();
 }
+
+// Overseerr movie search for the "Find movies" view — see
+// app/services/movie_search_service.py. Each result carries
+// `collection: {id, name} | null` and `media_status` (Overseerr's own).
+export async function searchMovies(query, { signal } = {}) {
+  const res = await fetch(`/api/movies/search?${new URLSearchParams({ query })}`, { signal });
+  if (!res.ok) throw new Error(`searchMovies failed: ${res.status}`);
+  return (await res.json()).results;
+}
+
+// Every movie in a TMDB collection with its Overseerr availability,
+// requested or not: {id, name, overview, parts: [...]}.
+export async function fetchCollection(collectionId, { signal } = {}) {
+  const res = await fetch(`/api/collections/${collectionId}`, { signal });
+  if (!res.ok) throw new Error(`fetchCollection failed: ${res.status}`);
+  return (await res.json()).collection;
+}
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `request failed: ${res.status}`);
+  return data;
+}
+
+// Creates a real Overseerr request: {id, media_status}.
+export function requestMovie(tmdbId) {
+  return postJson("/api/movies/request", { tmdb_id: tmdbId });
+}
+
+// Requests every not-yet-requested movie in a collection. Failures on
+// individual movies don't abort the rest: {requested: [...], failed: [...],
+// collection}.
+export function requestCollection(collectionId) {
+  return postJson(`/api/collections/${collectionId}/request`);
+}

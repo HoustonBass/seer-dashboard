@@ -189,3 +189,50 @@ def test_concurrent_calls_for_same_filter_are_thread_safe_and_single_flight(repo
     assert sources.count("live") == 1
     assert sources.count("cache") == 4
     assert all(len(rows) == 2 for rows, _ in results)
+
+
+SEARCH_PAGE = {
+    "results": [
+        {"id": 315635, "mediaType": "movie", "title": "Spider-Man: Homecoming", "releaseDate": "2017-07-05",
+         "posterPath": "/p.jpg", "overview": "Peter...", "mediaInfo": {"status": 5}},
+        {"id": 7, "mediaType": "movie", "title": "Unreleased", "releaseDate": "", "mediaInfo": None},
+        {"id": 9, "mediaType": "tv", "name": "A Show"},
+        {"id": 11, "mediaType": "person", "name": "An Actor"},
+    ]
+}
+
+COLLECTION_BODY = {
+    "id": 531241,
+    "name": "Spider-Man (MCU) Collection",
+    "overview": "...",
+    "parts": [
+        {"id": 969681, "title": "Brand New Day", "releaseDate": "2026-07-29"},
+        {"id": 315635, "title": "Homecoming", "releaseDate": "2017-07-05", "mediaInfo": {"status": 5}},
+        {"id": 1, "title": "No Date"},
+    ],
+}
+
+
+def test_search_movies_percent_encodes_spaces_and_keeps_only_movies(tmp_path):
+    repo = SeerrRepo(base_url="http://seerr.test", api_key="k", db_path=tmp_path / "s.db")
+    with patch("app.repos.seerr_repo.http.get", return_value=FakeResponse(SEARCH_PAGE)) as mock_get:
+        results = repo.search_movies("spider-man & co")
+
+    assert mock_get.call_args.args[0] == "http://seerr.test/api/v1/search?query=spider-man%20%26%20co"
+    assert [r["tmdb_id"] for r in results] == [315635, 7]
+    assert results[0]["media_status"] == 5
+    assert results[1]["media_status"] is None
+    assert results[1]["release_date"] is None  # "" normalized
+
+
+def test_get_collection_sorts_parts_by_release_date_and_caches(tmp_path):
+    repo = SeerrRepo(base_url="http://seerr.test", api_key="k", db_path=tmp_path / "s.db")
+    with patch("app.repos.seerr_repo.http.get", return_value=FakeResponse(COLLECTION_BODY)) as mock_get:
+        collection, source = repo.get_collection(531241)
+        again, again_source = repo.get_collection(531241)
+
+    assert source == "live" and again_source == "cache"
+    assert mock_get.call_count == 1
+    assert [p["tmdb_id"] for p in collection["parts"]] == [315635, 969681, 1]  # undated last
+    assert collection["parts"][0]["media_status"] == 5
+    assert again == collection
